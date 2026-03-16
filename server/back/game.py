@@ -33,8 +33,7 @@ class Game:
         
         for dr, dc in directions:
             count = 1
-            win_line = [[last_row, last_col]]
-            
+            win_line = [[last_row, last_col]]       
             # Sens direct (+)
             for i in range(1, 5):
                 r = last_row + (dr * i)
@@ -44,7 +43,6 @@ class Game:
                     win_line.append([r, c])
                 else:
                     break
-                    
             # Sens opposé (-)
             for i in range(1, 5):
                 r = last_row - (dr * i)
@@ -54,10 +52,8 @@ class Game:
                     win_line.append([r, c])
                 else:
                     break
-                    
             if count >= 5:
                 if not self.check_no_capture_in_win_line(win_line, color):
-                    print(win_line)
                     return color
         return 0
 
@@ -95,7 +91,6 @@ class Game:
                 self.captured_by_black += pieces_captured_this_turn
             elif color == 2:
                 self.captured_by_white += pieces_captured_this_turn
-                
         return pieces_captured_this_turn
 
     def check_no_capture_in_win_line(self, win_line, color):
@@ -112,7 +107,6 @@ class Game:
                 for i in range(-2, 3):
                     r = row + (dr * i)
                     c = col + (dc * i)
-                    
                     if 0 <= r < 19 and 0 <= c < 19:
                         cell = self.board[r][c]
                         if cell == color:
@@ -134,7 +128,6 @@ class Game:
     
         if color == 0:
             return 0
-
         directions = [
             (0, 1),  (1, 0),
             (1, 1),  (1, -1) 
@@ -145,9 +138,7 @@ class Game:
             ".X.XX.",
             ".XX.X."
         ]
-        
         free_three_count = 0
-        
         for dr, dc in directions:
             line_string = ""
             for i in range(-4, 5):
@@ -169,11 +160,9 @@ class Game:
             for pattern in patterns:
                 if pattern in line_string:
                     is_free_three = True
-                    break
-                    
+                    break 
             if is_free_three:
                 free_three_count += 1
-                
         if free_three_count >= 2:
             return 1
             
