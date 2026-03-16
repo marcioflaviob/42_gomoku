@@ -5,6 +5,9 @@ import { io, Socket } from 'socket.io-client';
 const BoardPage: React.FC = () => {
     const socketRef = useRef<Socket | null>(null);
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
+    const [player1Captures, setPlayer1Captures] = useState<number>(0);
+    const [player2Captures, setPlayer2Captures] = useState<number>(0);
+    const [aiResponseTime, setAiResponseTime] = useState<number>(0);
     const boardRef = useRef<Status[][]>(Array.from({ length: BOARD_SIZE }, () =>
       Array.from({ length: BOARD_SIZE }, () => Status.Empty)
     ));
@@ -53,8 +56,11 @@ const BoardPage: React.FC = () => {
     useEffect(() => {
       socketRef.current = io(import.meta.env.VITE_API_URL);
 
-      socketRef.current.on('boardUpdate', (data: Board) => {
+      socketRef.current.on('boardUpdate', (data: Board & { player1Captures?: number; player2Captures?: number; aiResponseTime?: number }) => {
         boardRef.current = data.board;
+        if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
+        if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
+        if (data.aiResponseTime !== undefined) setAiResponseTime(data.aiResponseTime);
       });
 
       return () => {
@@ -66,6 +72,22 @@ const BoardPage: React.FC = () => {
     <div className="flex flex-col items-center justify-start gap-6 p-6 h-full bg-amber-50">
       <div className="text-center">
         <h1 className="text-3xl font-bold text-gray-800">Gomoku Board</h1>
+      </div>
+
+      {/* Game stats */}
+      <div className="flex gap-8 justify-center w-full">
+        <div className="bg-white rounded-lg shadow-md p-4 min-w-max">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Player 1 Captures</h3>
+          <p className="text-2xl font-bold text-black">{player1Captures}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow-md p-4 min-w-max">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Player 2 Captures</h3>
+          <p className="text-2xl font-bold text-white bg-gray-900 border border-gray-600 w-fit px-2 rounded">{player2Captures}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow-md p-4 min-w-max">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">AI Response Time</h3>
+          <p className="text-2xl font-bold text-blue-600">{aiResponseTime}ms</p>
+        </div>
       </div>
 
       <div className="relative inline-block" role="region" aria-label="Gomoku board" style={{
