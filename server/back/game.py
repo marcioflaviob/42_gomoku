@@ -4,7 +4,7 @@ class Game:
         self.captured_by_white = 0
         self.captured_by_black = 0
         self.is_local = is_local
-
+        self.last_play = [0,-1]
 
     def play(self, coord, color):
         col_index = ord(coord[0].upper()) - 65
@@ -19,13 +19,16 @@ class Game:
         if check_win_result:
             return check_win_result            
         self.check_capture(row, col, "remove")
+        if self.last_play != [0,-1] and self.check_win(self.last_play[0], self.last_play[1],"oppo"):
+            opposite_color = 2 if color == 1 else 1
+            return opposite_color
+        self.last_play = [row,col]
         return 0
 
-    def check_win(self, last_row, last_col):
+    def check_win(self, last_row, last_col, winner = "me"):
         color = self.board[last_row][last_col]
         if color == 0:
             return 0
-            
         directions = [
             (0, 1),  (1, 0),
             (1, 1),  (1, -1)
@@ -53,7 +56,7 @@ class Game:
                 else:
                     break
             if count >= 5:
-                if not self.check_no_capture_in_win_line(win_line, color):
+                if not self.check_no_capture_in_win_line(win_line, color) or winner == "oppo":
                     return color
         return 0
 
