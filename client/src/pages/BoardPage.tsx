@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BOARD_SIZE, Status, type Board } from '../utils/constants';
+import { BOARD_SIZE, GameMode, Status, type Board } from '../utils/constants';
 import { io, Socket } from 'socket.io-client';
 
-const BoardPage: React.FC = () => {
+const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
+    const [currentPlayer, setCurrentPlayer] = useState<number>(1);
+    const [loading, setLoading] = useState<boolean>(false);
     const socketRef = useRef<Socket | null>(null);
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
     const [player1Captures, setPlayer1Captures] = useState<number>(0);
@@ -12,7 +14,7 @@ const BoardPage: React.FC = () => {
       Array.from({ length: BOARD_SIZE }, () => Status.Empty)
     ));
 
-    console.log(boardRef.current);
+    // console.log(boardRef.current);
 
     // temporary
     if (boardRef.current.length === BOARD_SIZE && boardRef.current[0].length === BOARD_SIZE) {
@@ -34,9 +36,14 @@ const BoardPage: React.FC = () => {
 
     const handlePiecePlacement = (row: number, col: number, piece: Status) => {
       if (piece !== Status.Empty && piece !== Status.Suggested) return; // Only allow placing on empty or suggested cells
+      if (loading) return; // Prevent actions while waiting for AI response
       console.log(`row ${row} col ${col} piece ${piece}`)
 
-      socketRef.current?.emit('placePiece', { row, col });
+      console.log('Emitting placePiece event with:', { row, col, color: currentPlayer });
+
+      socketRef.current?.emit('placePiece', { row, col, color: currentPlayer });
+      setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
+      setLoading(true);
     }
 
     const getClassNameForPiece = (piece: Status) => {
@@ -62,6 +69,11 @@ const BoardPage: React.FC = () => {
         if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
         if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
         if (data.aiResponseTime !== undefined) setAiResponseTime(data.aiResponseTime);
+        setLoading(false);
+      });
+
+      socketRef.current?.on('error', (err) => {
+        console.error('Socket error:', err);
       });
 
       return () => {

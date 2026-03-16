@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { GameMode } from '../utils/constants';
 
 const HomePage: React.FC = () => {
 
@@ -10,10 +11,10 @@ const HomePage: React.FC = () => {
                 <p className="text-gray-600 text-lg">A 42 project written by Sebastien Bo and Marcio Brandao</p>
             </div>
             <div className='flex flex-row gap-6'>
-                <Link to="/board" className="px-8 py-3 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors">
+                <Link to="/board" state={{ mode: GameMode.Solo }} className="px-8 py-3 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors">
                     Play with a friend
                 </Link>
-                <Link to="/board" className="px-8 py-3 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors">
+                <Link to="/board" state={{ mode: GameMode.Multiplayer }} className="px-8 py-3 bg-gray-800 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors">
                     Play against AI
                 </Link>
             </div>

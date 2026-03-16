@@ -6,23 +6,20 @@ class Game:
         self.is_local = is_local
         self.last_play = [0,-1]
 
-    def play(self, coord, color):
-        col_index = ord(coord[0].upper()) - 65
-        row_index = int(coord[1:]) - 1
-        position = (19 * row_index) + col_index
-        row = position // 19
-        col = position % 19
-        if (self.check_double_three(row,col,color)):
+    def play(self, row, col, color):
+        if not (0 <= row < 19 and 0 <= col < 19):
+            return -1
+        if self.check_double_three(row, col, color):
             return -1
         self.board[row][col] = color
-        check_win_result = self.check_win(row, col) 
+        check_win_result = self.check_win(row, col)
         if check_win_result:
-            return check_win_result            
+            return check_win_result
         self.check_capture(row, col, "remove")
-        if self.last_play != [0,-1] and self.check_win(self.last_play[0], self.last_play[1],"oppo"):
+        if self.last_play != [0, -1] and self.check_win(self.last_play[0], self.last_play[1], "oppo"):
             opposite_color = 2 if color == 1 else 1
             return opposite_color
-        self.last_play = [row,col]
+        self.last_play = [row, col]
         return 0
 
     def check_win(self, last_row, last_col, winner = "me"):

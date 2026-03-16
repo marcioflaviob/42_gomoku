@@ -13,11 +13,16 @@ export enum GameStatus {
   Player2Win = 'player2-win'
 }
 
+export enum GameMode {
+  Solo = 'solo',
+  Multiplayer = 'multiplayer'
+}
+
 export interface Board {
   board: Status[][],
   aiCalculationTime: number,
   player1PiecesCaptured: number,
   player2PiecesCaptured: number,
   gameStatus: GameStatus
-  gameMode: 'solo' | 'multiplayer',
+  gameMode: GameMode,
 }
