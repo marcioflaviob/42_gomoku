@@ -4,8 +4,7 @@ export enum Status {
   Empty = 0,
   Player1 = 1,
   Player2 = 2,
-  Forbidden = 3,
-  Suggested = 4
+  Suggested = 3
 };
 
 export enum GameStatus {

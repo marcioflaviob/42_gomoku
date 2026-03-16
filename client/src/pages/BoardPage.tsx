@@ -12,13 +12,16 @@ const BoardPage: React.FC = () => {
       Array.from({ length: BOARD_SIZE }, () => Status.Empty)
     ));
 
+    console.log(boardRef.current);
+
     // temporary
     if (boardRef.current.length === BOARD_SIZE && boardRef.current[0].length === BOARD_SIZE) {
       boardRef.current[3][3] = Status.Player1;
       boardRef.current[3][4] = Status.Player2;
       boardRef.current[4][3] = Status.Player2;
       boardRef.current[4][4] = Status.Player1;
-      boardRef.current[9][9] = Status.Forbidden;
+      boardRef.current[15][4] = Status.Player1;
+      boardRef.current[18][18] = Status.Player2;
       boardRef.current[10][10] = Status.Suggested;
     }
 
@@ -26,8 +29,8 @@ const BoardPage: React.FC = () => {
     const cols = Array.from({ length: boardRef.current[0].length }, (_, i) => i);
     const cellSize = 40;
 
-    // Column indicators: A-S for 19 columns
-    const colIndicators = Array.from({ length: BOARD_SIZE }, (_, i) => String.fromCharCode(65 + i));
+    // Column indicators: 0-18 for 19 columns
+    const colIndicators = Array.from({ length: BOARD_SIZE }, (_, i) => i.toString());
 
     const handlePiecePlacement = (row: number, col: number, piece: Status) => {
       if (piece !== Status.Empty && piece !== Status.Suggested) return; // Only allow placing on empty or suggested cells
@@ -41,11 +44,9 @@ const BoardPage: React.FC = () => {
         case Status.Empty:
           return 'hover:opacity-50 hover:bg-blue-300 cursor-pointer';
         case Status.Player1:
-          return 'bg-black';
-        case Status.Player2:
           return 'bg-white border border-gray-400';
-        case Status.Forbidden:
-          return 'hover:opacity-50 hover:bg-red-500 cursor-not-allowed';
+        case Status.Player2:
+          return 'bg-black';
         case Status.Suggested:
           return 'hover:opacity-50 bg-green-500 cursor-pointer';
         default:
@@ -94,10 +95,10 @@ const BoardPage: React.FC = () => {
         width: `${(BOARD_SIZE - 1) * cellSize + 60}px`,
         height: `${(BOARD_SIZE - 1) * cellSize + 60}px`,
       }}>
-        {/* Column indicators (A-S) */}
-        {colIndicators.map((letter, idx) => (
+        {/* Column indicators (0-18) */}
+        {colIndicators.map((colNum, idx) => (
           <span
-            key={`col-indicator-${letter}`}
+            key={`col-indicator-${colNum}`}
             className={`absolute text-xs font-semibold select-none ${hoveredCell && hoveredCell.col === idx ? 'bg-blue-300 text-blue-900 rounded px-1' : 'text-gray-700'}`}
             style={{
               left: `${20 + idx * cellSize}px`,
@@ -106,10 +107,10 @@ const BoardPage: React.FC = () => {
               width: '24px',
               textAlign: 'center',
             }}
-          >{letter}</span>
+          >{colNum}</span>
         ))}
 
-        {/* Row indicators (1-19) */}
+        {/* Row indicators (0-18) */}
         {rows.map((row) => (
           <span
             key={`row-indicator-${row}`}
@@ -121,7 +122,7 @@ const BoardPage: React.FC = () => {
               width: '24px',
               textAlign: 'center',
             }}
-          >{row + 1}</span>
+          >{row}</span>
         ))}
 
         <svg className="absolute inset-0 w-full h-full" style={{
@@ -173,7 +174,7 @@ const BoardPage: React.FC = () => {
                 key={`${row}-${col}`}
                 type="button"
                 className={`absolute w-6 h-6 rounded-full -translate-x-1/2 -translate-y-1/2 ${getClassNameForPiece(piece)}`}
-                aria-label={`Cell ${row + 1}, ${colIndicators[col]}`}
+                aria-label={`Cell ${row}, ${colIndicators[col]}`}
                 style={{
                   left: `${20 + col * cellSize}px`,
                   top: `${20 + row * cellSize}px`,
