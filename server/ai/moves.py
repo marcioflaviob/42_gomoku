@@ -141,7 +141,7 @@ def check_win(board, last_row, last_col, winner,captured_white_black):
             else:
                 break
         if count >= 5:
-            if not check_no_capture_in_win_line(win_line, color) or winner == "oppo":
+            if not check_no_capture_in_win_line(board,win_line, color) or winner == "oppo":
                 return color
     return 0
 def check_capture(board, last_row, last_col, action,captured_white_black):

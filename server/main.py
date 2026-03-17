@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ai.moves import play, undo, redo
 import numpy as np
-
+from ai.minimax import get_best_move
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='asgi')
 app = FastAPI()
 app.add_middleware(
@@ -87,9 +87,23 @@ async def update(sid, data):
     if row is None or col is None or color is None:
         await sio.emit('error', {"error": "Données invalides"}, to=sid)
         return
-    start_time = time.perf_counter()
     result = play(current_game, row, col, color)
+
+    if result == -1:
+        await sio.emit('boardUpdate', {"status": "forbidden", "reason": "Double-Three"}, to=sid)
+        return
+    response = build_board_response(current_game, winner=result, elapsed=0)
+    print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
+    await sio.emit('boardUpdate', response, to=sid)
+
+    start_time = time.perf_counter()
+    print("1")
+    best_move, best_score = get_best_move(current_game["board"],color,current_game["captured_white_black"][0],current_game["captured_white_black"][1],4)
+    print("2")
     end_time = time.perf_counter()
+    elapsed_time = end_time - start_time
+
+    result = play(current_game, best_move[0], best_move[1], 2)
     elapsed_time = end_time - start_time
     if result == -1:
         await sio.emit('boardUpdate', {"status": "forbidden", "reason": "Double-Three"}, to=sid)

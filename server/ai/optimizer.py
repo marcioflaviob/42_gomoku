@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.ndimage import uniform_filter
-from constants import EMPTY, PLAYER1, PLAYER2
+from ai.constants import EMPTY, PLAYER1, PLAYER2
 
 def get_candidate_moves(board: np.ndarray, radius: int = 2, player: int = PLAYER2) -> list[tuple[int, int]]:
     """

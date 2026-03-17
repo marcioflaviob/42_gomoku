@@ -1,5 +1,5 @@
 import numpy as np
-from constants import EMPTY, BOARD_SIZE
+from ai.constants import EMPTY, BOARD_SIZE
 
 # Scores for patterns — you will tune these
 SCORE_OPEN_FOUR    = 100_000
