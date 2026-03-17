@@ -2,9 +2,9 @@ import socketio
 import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from game import Game
+from ai.moves import play, undo, redo
+import numpy as np
 
-# Create Socket.IO server
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='asgi')
 app = FastAPI()
 app.add_middleware(
@@ -24,7 +24,13 @@ games = {}
 @sio.event
 async def connect(sid, environ):
     print(f"🟢 Nouveau client connecté: {sid}")
-    games[sid] = Game(is_local=False)
+    games[sid] =  {
+    "board": np.zeros((19, 19), dtype=int),
+    "last_play": [0, -1],
+    "captured_white_black": [0,0],
+    "history" : [],
+    "future": []  
+}
 
 @sio.event
 async def disconnect(sid):
@@ -34,14 +40,15 @@ async def disconnect(sid):
 def build_board_response(game, status="success", winner=0, elapsed=0.0):
     return {
         "status": status,
-        "board": game.board,
+        "board": game["board"].tolist(),
         "winner": winner,
-        "player1Captures": game.captured_by_white,
-        "player2Captures": game.captured_by_black,
+        "player1Captures": game["captured_white_black"][0],
+        "player2Captures": game["captured_white_black"][1],
         "aiResponseTime": elapsed,
-        "canUndo": len(game.history) > 0,
-        "canRedo": len(game.future) > 0,
+        "canUndo": len(game["history"]) > 0,
+        "canRedo": len(game["future"]) > 0,
     }
+
 
 @sio.event
 async def update(sid, data):
@@ -53,17 +60,23 @@ async def update(sid, data):
     move = data.get("move")
 
     if move == "undo":
-        current_game.undo()
+        undo(current_game)
         await sio.emit('boardUpdate', build_board_response(current_game), to=sid)
         return
 
     if move == "redo":
-        current_game.redo()
+        redo(current_game)
         await sio.emit('boardUpdate', build_board_response(current_game), to=sid)
         return
 
     if move == "reset":
-        games[sid] = Game(is_local=False)
+        games[sid] =  {
+    "board": np.zeros((19, 19), dtype=int),
+    "last_play": [0, -1],
+    "captured_white_black": [0,0],
+    "history" : [],
+    "future": []  
+}
         await sio.emit('boardUpdate', build_board_response(games[sid]), to=sid)
         return
 
@@ -75,7 +88,7 @@ async def update(sid, data):
         await sio.emit('error', {"error": "Données invalides"}, to=sid)
         return
     start_time = time.perf_counter()
-    result = current_game.play(row, col, color)
+    result = play(current_game, row, col, color)
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time
     if result == -1:
