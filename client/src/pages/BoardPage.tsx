@@ -37,6 +37,9 @@ const BoardPage: React.FC = () => {
         ? 'bg-red-100 text-red-800 border-red-300'
         : 'bg-transparent text-transparent border-transparent';
 
+    const [showHints, setShowHints] = useState<boolean>(false);
+    const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
+
     // Column indicators: 0-18 for 19 columns
     const colIndicators = Array.from({ length: BOARD_SIZE }, (_, i) => i.toString());
 
@@ -74,6 +77,7 @@ const BoardPage: React.FC = () => {
         case Status.Player1:
           return 'bg-white border border-gray-400';
         case Status.Player2:
+          if (theme === 'dark') return 'bg-blue-500 border border-gray-400';
           return 'bg-black';
         case Status.Suggested:
           return 'hover:opacity-50 bg-green-500 cursor-pointer';
@@ -135,6 +139,27 @@ const BoardPage: React.FC = () => {
             className="px-3 py-1 rounded text-white font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-700 transition-colors"
           >Play Again</button>
         )}
+        {/* Switch buttons for hints and heatmap */}
+        <div className="flex items-center gap-2 ml-6">
+          <label className="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showHints}
+              onChange={() => setShowHints((prev) => !prev)}
+              className="accent-blue-500 mr-1"
+            />
+            <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Hints</span>
+          </label>
+          <label className="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showHeatmap}
+              onChange={() => setShowHeatmap((prev) => !prev)}
+              className="accent-red-500 mr-1"
+            />
+            <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Heatmap</span>
+          </label>
+        </div>
       </div>
 
       {/* Game stats */}

@@ -1,12 +1,14 @@
 from ai.constants import BOARD_SIZE, EMPTY
 from ai.optimizer import get_candidate_moves
-from ai.moves import apply_capture ,check_win
+from ai.moves import apply_capture, check_win
 from ai.heuristics import evaluate_board
 import numpy as np
 import time
 import random
+
 INF = float('inf')
 compteur_heuristique = 0
+
 def minimax(
     board: np.ndarray,
     depth: int,
