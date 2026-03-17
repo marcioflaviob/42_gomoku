@@ -45,10 +45,10 @@ class Game:
         self.history.append(self._snapshot())
         self.future.clear()
         self.board[row][col] = color
+        self.check_capture(row, col, "remove")
         check_win_result = self.check_win(row, col)
         if check_win_result:
             return check_win_result
-        self.check_capture(row, col, "remove")
         if self.last_play != [0, -1] and self.check_win(self.last_play[0], self.last_play[1], "oppo"):
             opposite_color = 2 if color == 1 else 1
             return opposite_color

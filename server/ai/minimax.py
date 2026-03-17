@@ -1,5 +1,6 @@
 from constants import BOARD_SIZE
 from optimizer import get_candidate_moves
+from heuristics import evaluate_board
 from moves import apply_capture
 import numpy as np
 import time
