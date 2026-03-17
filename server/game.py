@@ -5,12 +5,45 @@ class Game:
         self.captured_by_black = 0
         self.is_local = is_local
         self.last_play = [0,-1]
+        self.history = []  # stack of snapshots before each move
+        self.future = []   # stack of snapshots for redo
+
+    def _snapshot(self):
+        return {
+            'board': [row[:] for row in self.board],
+            'captured_by_white': self.captured_by_white,
+            'captured_by_black': self.captured_by_black,
+            'last_play': self.last_play[:],
+        }
+
+    def _restore(self, snapshot):
+        self.board = [row[:] for row in snapshot['board']]
+        self.captured_by_white = snapshot['captured_by_white']
+        self.captured_by_black = snapshot['captured_by_black']
+        self.last_play = snapshot['last_play'][:]
+
+    def undo(self):
+        if not self.history:
+            return False
+        self.future.append(self._snapshot())
+        self._restore(self.history.pop())
+        return True
+
+    def redo(self):
+        if not self.future:
+            return False
+        self.history.append(self._snapshot())
+        self._restore(self.future.pop())
+        return True
 
     def play(self, row, col, color):
         if not (0 <= row < 19 and 0 <= col < 19):
             return -1
         if self.check_double_three(row, col, color):
             return -1
+        # Save snapshot before applying the move; clear redo stack
+        self.history.append(self._snapshot())
+        self.future.clear()
         self.board[row][col] = color
         check_win_result = self.check_win(row, col)
         if check_win_result:
@@ -88,9 +121,9 @@ class Game:
                     
         if pieces_captured_this_turn > 0:
             if color == 1:
-                self.captured_by_black += pieces_captured_this_turn
-            elif color == 2:
                 self.captured_by_white += pieces_captured_this_turn
+            elif color == 2:
+                self.captured_by_black += pieces_captured_this_turn
         return pieces_captured_this_turn
 
     def check_no_capture_in_win_line(self, win_line, color):

@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.ndimage import uniform_filter
-from constants import EMPTY, PLAYER2
+from constants import EMPTY, PLAYER1, PLAYER2
 
 def get_candidate_moves(board: np.ndarray, radius: int = 2, player: int = PLAYER2) -> list[tuple[int, int]]:
     """
@@ -8,7 +8,7 @@ def get_candidate_moves(board: np.ndarray, radius: int = 2, player: int = PLAYER
     Board is a 19x19 numpy array.
     """
     # Calculate occupied cells for the specified player
-    occupied = (board == player)
+    occupied = (board == PLAYER1) | (board == PLAYER2)
 
     if not occupied.any():
         return [(9, 9)]

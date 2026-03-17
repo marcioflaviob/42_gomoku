@@ -7,10 +7,9 @@ export enum Status {
   Suggested = 3
 };
 
-export enum GameStatus {
-  InProgress = 'in-progress',
-  Player1Win = 'player1-win',
-  Player2Win = 'player2-win'
+export enum MoveStatus {
+  Success = 'success',
+  Forbidden = 'forbidden'
 }
 
 export enum GameMode {
@@ -19,10 +18,13 @@ export enum GameMode {
 }
 
 export interface Board {
+  status: MoveStatus,
   board: Status[][],
-  aiCalculationTime: number,
+  aiResponseTime: number,
   player1PiecesCaptured: number,
   player2PiecesCaptured: number,
-  gameStatus: GameStatus
+  winner: 1 | 2 | 0,
   gameMode: GameMode,
+  canUndo: boolean,
+  canRedo: boolean
 }

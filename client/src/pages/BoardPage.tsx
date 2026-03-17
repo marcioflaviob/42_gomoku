@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BOARD_SIZE, GameMode, Status, type Board } from '../utils/constants';
+import { BOARD_SIZE, GameMode, MoveStatus, Status, type Board } from '../utils/constants';
 import { io, Socket } from 'socket.io-client';
+import { useLocation } from 'react-router-dom';
+import { useTheme } from '../context/ThemeContext';
 
-const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
+const BoardPage: React.FC = () => {
+    const location = useLocation();
+    const { mode } : { mode: GameMode } = location.state || {};
+    const { theme } = useTheme();
     const [currentPlayer, setCurrentPlayer] = useState<number>(1);
     const [loading, setLoading] = useState<boolean>(false);
     const socketRef = useRef<Socket | null>(null);
@@ -10,41 +15,57 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
     const [player1Captures, setPlayer1Captures] = useState<number>(0);
     const [player2Captures, setPlayer2Captures] = useState<number>(0);
     const [aiResponseTime, setAiResponseTime] = useState<number>(0);
-    const boardRef = useRef<Status[][]>(Array.from({ length: BOARD_SIZE }, () =>
+    const [winner, setWinner] = useState<Board['winner']>(0);
+    const [status, setStatus] = useState<MoveStatus>(MoveStatus.Success);
+    const [canUndo, setCanUndo] = useState<boolean>(false);
+    const [canRedo, setCanRedo] = useState<boolean>(false);
+    const [board, setBoard] = useState<Status[][]>(Array.from({ length: BOARD_SIZE }, () =>
       Array.from({ length: BOARD_SIZE }, () => Status.Empty)
     ));
 
-    // console.log(boardRef.current);
-
-    // temporary
-    if (boardRef.current.length === BOARD_SIZE && boardRef.current[0].length === BOARD_SIZE) {
-      boardRef.current[3][3] = Status.Player1;
-      boardRef.current[3][4] = Status.Player2;
-      boardRef.current[4][3] = Status.Player2;
-      boardRef.current[4][4] = Status.Player1;
-      boardRef.current[15][4] = Status.Player1;
-      boardRef.current[18][18] = Status.Player2;
-      boardRef.current[10][10] = Status.Suggested;
-    }
-
-    const rows = Array.from({ length: boardRef.current.length }, (_, i) => i);
-    const cols = Array.from({ length: boardRef.current[0].length }, (_, i) => i);
+    const rows = Array.from({ length: BOARD_SIZE }, (_, i) => i);
+    const cols = Array.from({ length: BOARD_SIZE }, (_, i) => i);
     const cellSize = 40;
+    const statusMessage = winner !== 0
+      ? `Player ${winner} wins!`
+      : status !== MoveStatus.Success
+        ? 'Forbidden move. Try another position.'
+        : '';
+    const statusClassName = winner !== 0
+      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+      : status !== MoveStatus.Success
+        ? 'bg-red-100 text-red-800 border-red-300'
+        : 'bg-transparent text-transparent border-transparent';
 
     // Column indicators: 0-18 for 19 columns
     const colIndicators = Array.from({ length: BOARD_SIZE }, (_, i) => i.toString());
 
     const handlePiecePlacement = (row: number, col: number, piece: Status) => {
-      if (piece !== Status.Empty && piece !== Status.Suggested) return; // Only allow placing on empty or suggested cells
-      if (loading) return; // Prevent actions while waiting for AI response
-      console.log(`row ${row} col ${col} piece ${piece}`)
-
-      console.log('Emitting placePiece event with:', { row, col, color: currentPlayer });
-
-      socketRef.current?.emit('placePiece', { row, col, color: currentPlayer });
-      setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
+      if (piece !== Status.Empty && piece !== Status.Suggested) return;
+      if (loading || winner) return;
+      socketRef.current?.emit('update', { move: "placePiece", row, col, color: currentPlayer });
+      if (mode === GameMode.Multiplayer) setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
       setLoading(true);
-    }
+    };
+
+    const handleUndo = () => {
+      if (!canUndo || loading) return;
+      socketRef.current?.emit('update', { move: 'undo' });
+      setLoading(true);
+    };
+
+    const handleRedo = () => {
+      if (!canRedo || loading) return;
+      socketRef.current?.emit('update', { move: 'redo' });
+      setLoading(true);
+    };
+
+    const handlePlayAgain = () => {
+      if (winner === 0 || loading) return;
+      socketRef.current?.emit('update', { move: 'reset' });
+      setCurrentPlayer(1);
+      setLoading(true);
+    };
 
     const getClassNameForPiece = (piece: Status) => {
       switch (piece) {
@@ -64,11 +85,15 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
     useEffect(() => {
       socketRef.current = io(import.meta.env.VITE_API_URL);
 
-      socketRef.current.on('boardUpdate', (data: Board & { player1Captures?: number; player2Captures?: number; aiResponseTime?: number }) => {
-        boardRef.current = data.board;
-        if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
-        if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
+      socketRef.current.on('boardUpdate', (data: Board) => {
+        if (data.board) setBoard(data.board);
+        if (data.status) setStatus(data.status);
+        if (data.player1PiecesCaptured !== undefined) setPlayer1Captures(data.player1PiecesCaptured);
+        if (data.player2PiecesCaptured !== undefined) setPlayer2Captures(data.player2PiecesCaptured);
         if (data.aiResponseTime !== undefined) setAiResponseTime(data.aiResponseTime);
+        if (data.canUndo !== undefined) setCanUndo(data.canUndo);
+        if (data.canRedo !== undefined) setCanRedo(data.canRedo);
+        if (data.winner !== undefined) setWinner(data.winner);
         setLoading(false);
       });
 
@@ -82,24 +107,57 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
     }, []);
 
     return (
-    <div className="flex flex-col items-center justify-start gap-6 p-6 h-full bg-amber-50">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-gray-800">Gomoku Board</h1>
+    <div className={`flex flex-col items-center justify-start gap-6 p-6 h-full ${theme === 'dark' ? 'bg-gray-900' : 'bg-amber-50'}`}>
+      <div className="flex items-center gap-4">
+        <h1 className={`text-3xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Gomoku Board</h1>
+        <button
+          onClick={handleUndo}
+          disabled={!canUndo || loading}
+          className={`px-3 py-1 rounded font-semibold disabled:opacity-40 transition-colors ${
+            theme === 'dark' 
+              ? 'bg-gray-700 text-white hover:bg-gray-600' 
+              : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+          }`}
+        >⟲ Undo</button>
+        <button
+          onClick={handleRedo}
+          disabled={!canRedo || loading}
+          className={`px-3 py-1 rounded font-semibold disabled:opacity-40 transition-colors ${
+            theme === 'dark' 
+              ? 'bg-gray-700 text-white hover:bg-gray-600' 
+              : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+          }`}
+        >⟳ Redo</button>
+        {winner !== 0 && (
+          <button
+            onClick={handlePlayAgain}
+            disabled={loading}
+            className="px-3 py-1 rounded text-white font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-700 transition-colors"
+          >Play Again</button>
+        )}
       </div>
 
       {/* Game stats */}
       <div className="flex gap-8 justify-center w-full">
-        <div className="bg-white rounded-lg shadow-md p-4 min-w-max">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Player 1 Captures</h3>
+        <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
+          <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Player 1 Captures</h3>
           <p className="text-2xl font-bold text-black">{player1Captures}</p>
         </div>
-        <div className="bg-white rounded-lg shadow-md p-4 min-w-max">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Player 2 Captures</h3>
+        <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
+          <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Player 2 Captures</h3>
           <p className="text-2xl font-bold text-white bg-gray-900 border border-gray-600 w-fit px-2 rounded">{player2Captures}</p>
         </div>
-        <div className="bg-white rounded-lg shadow-md p-4 min-w-max">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">AI Response Time</h3>
-          <p className="text-2xl font-bold text-blue-600">{aiResponseTime}ms</p>
+        <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
+          <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>AI Response Time</h3>
+          <p className="text-2xl font-bold text-blue-600">{aiResponseTime.toFixed(5)}ms</p>
+        </div>
+      </div>
+
+      <div className="w-full flex justify-center" aria-live="polite">
+        <div
+          className={`min-h-10 px-4 py-2 rounded-md border font-semibold transition-opacity ${statusMessage ? 'opacity-100' : 'opacity-0'} ${statusClassName}`}
+        >
+          {statusMessage || 'Status'}
         </div>
       </div>
 
@@ -111,7 +169,7 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
         {colIndicators.map((colNum, idx) => (
           <span
             key={`col-indicator-${colNum}`}
-            className={`absolute text-xs font-semibold select-none ${hoveredCell && hoveredCell.col === idx ? 'bg-blue-300 text-blue-900 rounded px-1' : 'text-gray-700'}`}
+            className={`absolute text-xs font-semibold select-none ${hoveredCell && hoveredCell.col === idx ? theme === 'dark' ? 'bg-amber-400 text-gray-900 rounded px-1' : 'bg-blue-300 text-blue-900 rounded px-1' : theme === 'dark' ? 'text-gray-400' : 'text-gray-700'}`}
             style={{
               left: `${20 + idx * cellSize}px`,
               top: '0px',
@@ -126,7 +184,7 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
         {rows.map((row) => (
           <span
             key={`row-indicator-${row}`}
-            className={`absolute text-xs font-semibold select-none ${hoveredCell && hoveredCell.row === row ? 'bg-blue-300 text-blue-900 rounded px-1' : 'text-gray-700'}`}
+            className={`absolute text-xs font-semibold select-none ${hoveredCell && hoveredCell.row === row ? theme === 'dark' ? 'bg-amber-400 text-gray-900 rounded px-1' : 'bg-blue-300 text-blue-900 rounded px-1' : theme === 'dark' ? 'text-gray-400' : 'text-gray-700'}`}
             style={{
               left: '0px',
               top: `${20 + row * cellSize}px`,
@@ -148,7 +206,7 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
               y1={20 + row * cellSize}
               x2={20 + (BOARD_SIZE - 1) * cellSize}
               y2={20 + row * cellSize}
-              stroke="#8b7355"
+              stroke={theme === 'dark' ? '#4b5563' : '#8b7355'}
               strokeWidth="1.5"
             />
           ))}
@@ -160,7 +218,7 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
               y1="20"
               x2={20 + col * cellSize}
               y2={20 + (BOARD_SIZE - 1) * cellSize}
-              stroke="#8b7355"
+              stroke={theme === 'dark' ? '#4b5563' : '#8b7355'}
               strokeWidth="1.5"
             />
           ))}
@@ -172,7 +230,7 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
                 cx={20 + pos1 * cellSize}
                 cy={20 + pos2 * cellSize}
                 r="3"
-                fill="#8b7355"
+                fill={theme === 'dark' ? '#9ca3af' : '#8b7355'}
               />
             ))
           )}
@@ -180,7 +238,7 @@ const BoardPage: React.FC<{ mode: GameMode }> = ({ mode }) => {
 
         {rows.map((row) =>
           cols.map((col) => {
-            const piece = boardRef.current[row][col];
+            const piece = board[row][col];
             return (
               <button
                 key={`${row}-${col}`}
