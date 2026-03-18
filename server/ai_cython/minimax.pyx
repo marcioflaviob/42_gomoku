@@ -1,35 +1,41 @@
-from ai.constants import BOARD_SIZE, EMPTY
-from ai.optimizer import get_candidate_moves
-from ai.moves import apply_capture, check_win
-from ai.heuristics import evaluate_board
-import numpy as np
+from ai_cython.constants import BOARD_SIZE, EMPTY
+from ai_cython.optimizer import get_candidate_moves
+from ai_cython.moves import apply_capture, check_win
+from ai_cython.heuristics import evaluate_board
+cimport numpy as cnp
 import time
-import random
 
 INF = float('inf')
 compteur_heuristique = 0
 
+cnp.import_array()
+
 def minimax(
-    board: np.ndarray,
-    depth: int,
-    alpha: float,
-    beta: float,
-    is_maximizing: bool,
-    player: int,
-    player1_captures: int,
-    player2_captures: int,
-    last_move: tuple[int, int] | None = None
+    cnp.ndarray[cnp.int64_t, ndim=2] board,
+    int depth,
+    double alpha,
+    double beta,
+    bint is_maximizing,
+    int player,
+    int player1_captures,
+    int player2_captures,
+    tuple last_move = None
 ) -> float:
     """
     Returns the heuristic score of the board for `player`.
     Positive = good for player, Negative = bad for player.
     """
-    opponent = 2 if player == 1 else 1
+    cdef int opponent = 2 if player == 1 else 1
+    cdef object candidates
+    cdef int current_player
+    cdef double max_score, min_score, score
+    cdef int p1_cap, p2_cap, captured
+    cdef tuple move
     global compteur_heuristique
-    if depth == 0 or check_win(board,last_move[0],last_move[1],"me", [player1_captures,player2_captures]):
+    if depth == 0 or (last_move is not None and check_win(board,last_move[0],last_move[1],"me", [player1_captures,player2_captures])):
         compteur_heuristique += 1 # +1 évaluation !
         return evaluate_board(board, player, player1_captures, player2_captures)
-        # return random.randint(0, 1000)
+        #return random.randint(0, 1000)
     candidates = get_candidate_moves(board)
     if not candidates:
         return evaluate_board(board, player, player1_captures, player2_captures)
@@ -89,11 +95,11 @@ def minimax(
 
 
 def get_best_move(
-    board: np.ndarray,
-    player: int,
-    player1_captures: int,
-    player2_captures: int,
-    depth: int = 10
+    cnp.ndarray[cnp.int64_t, ndim=2] board,
+    int player,
+    int player1_captures,
+    int player2_captures,
+    int depth = 10
 ) -> tuple[tuple[int, int], float]:
     """
     Entry point for the AI. Returns (best_move, score).
@@ -101,19 +107,23 @@ def get_best_move(
 
     start = time.time()
 
-    candidates = get_candidate_moves(board)
-    best_move = None
-    best_score = -INF
-    alpha = -INF
-    beta = INF
+    cdef object candidates = get_candidate_moves(board)
+    cdef object best_move = None
+    cdef double best_score = -INF
+    cdef double alpha = -INF
+    cdef double beta = INF
+    cdef int p1_cap, p2_cap
+    cdef int captured
+    cdef tuple move
+    cdef cnp.ndarray[cnp.int64_t, ndim=2] board_copy
     p1_cap, p2_cap = player1_captures, player2_captures
     candidates = sort_candidates(board, candidates, player)
     # best_move = get_best_move_parallel(board, candidates, depth, player, p1_cap, p2_cap)
     # print(f"🧠 L'IA a terminé ! Nombre de plateaux évalués : {compteur_heuristique}")
-    i = 0
+    cdef int i = 0
     for move in candidates:
         i = i + 1
-        # print(move)
+        #print(move)
         board_copy = board.copy()
         p1_cap, p2_cap = player1_captures, player2_captures
         captured = apply_capture(board_copy, move, player)
@@ -145,9 +155,9 @@ def get_best_move(
 
 
 def sort_candidates(
-    board: np.ndarray,
+    cnp.ndarray[cnp.int64_t, ndim=2] board,
     candidates: list[tuple[int, int]],
-    player: int
+    int player
 ) -> list[tuple[int, int]]:
     """
     Orders candidates by a cheap heuristic before full search.
@@ -173,6 +183,13 @@ def evaluer_un_seul_coup(args):
     Cette fonction sera envoyée sur un cœur de processeur indépendant.
     Elle prend un coup, le joue, et lance un minimax classique.
     """
+    cdef cnp.ndarray[cnp.int64_t, ndim=2] board
+    cdef tuple move
+    cdef int depth, player, p1_cap, p2_cap
+    cdef int row, col
+    cdef double score
+    cdef cnp.ndarray[cnp.int64_t, ndim=2] board_local
+
     board, move, depth, player, p1_cap, p2_cap = args
     
     # On simule le coup (ici on triche un peu pour l'exemple, faites votre DO/UNDO)
@@ -194,7 +211,7 @@ def get_best_move_parallel(board, candidates, depth, player, p1_cap, p2_cap):
     La fonction principale qui distribue le travail aux cœurs du CPU.
     """
     # On prépare les paquets de données pour chaque cœur
-    taches = []
+    cdef list taches = []
     for move in candidates:
         taches.append((board, move, depth, player, p1_cap, p2_cap))
     

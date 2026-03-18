@@ -1,10 +1,30 @@
+import asyncio
 import socketio
 import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from ai.moves import play, undo, redo
 import numpy as np
-from ai.minimax import get_best_move
+
+try:
+    from ai_cython.moves import play, undo, redo
+    from ai_cython.minimax import get_best_move
+except ImportError:
+    # Fallback to pure Python modules when Cython extensions are not built yet.
+    print("⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️")
+    # from ai.moves import play, undo, redo
+    # from ai.minimax import get_best_move
+
+
+def create_new_game_state():
+    return {
+        "board": np.zeros((19, 19), dtype=int),
+        "last_play": [0, -1],
+        "captured_white_black": [0, 0],
+        "history": [],
+        "future": [],
+    }
+
+
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='asgi')
 app = FastAPI()
 app.add_middleware(
@@ -24,29 +44,24 @@ games = {}
 @sio.event
 async def connect(sid, environ):
     print(f"🟢 Nouveau client connecté: {sid}")
-    games[sid] =  {
-    "board": np.zeros((19, 19), dtype=int),
-    "last_play": [0, -1],
-    "captured_white_black": [0,0],
-    "history" : [],
-    "future": []  
-}
+    games[sid] = create_new_game_state()
 
 @sio.event
 async def disconnect(sid):
     print(f"🔴 Client déconnecté: {sid}")
     games.pop(sid, None)
 
-def build_board_response(game, status="success", winner=0, elapsed=0.0):
+def build_board_response(game, status="success", winner=0, elapsed=0.0, color = 2):
     return {
         "status": status,
         "board": game["board"].tolist(),
-        "winner": winner,
+        "winner": int(winner),
         "player1Captures": game["captured_white_black"][0],
         "player2Captures": game["captured_white_black"][1],
         "aiResponseTime": elapsed,
         "canUndo": len(game["history"]) > 0,
         "canRedo": len(game["future"]) > 0,
+        "color": color
     }
 
 
@@ -70,13 +85,7 @@ async def update(sid, data):
         return
 
     if move == "reset":
-        games[sid] =  {
-    "board": np.zeros((19, 19), dtype=int),
-    "last_play": [0, -1],
-    "captured_white_black": [0,0],
-    "history" : [],
-    "future": []  
-}
+        games[sid] = create_new_game_state()
         await sio.emit('boardUpdate', build_board_response(games[sid]), to=sid)
         return
 
@@ -92,14 +101,20 @@ async def update(sid, data):
     if result == -1:
         await sio.emit('boardUpdate', {"status": "forbidden", "reason": "Double-Three"}, to=sid)
         return
-    response = build_board_response(current_game, winner=result, elapsed=0)
+    response = build_board_response(current_game, winner=result, elapsed=0, color=color)
     print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
     await sio.emit('boardUpdate', response, to=sid)
+    await sio.sleep(0)
 
     start_time = time.perf_counter()
-    print("1")
-    best_move, best_score = get_best_move(current_game["board"],color,current_game["captured_white_black"][0],current_game["captured_white_black"][1],4)
-    print("2")
+    best_move, _best_score = await asyncio.to_thread(
+        get_best_move,
+        current_game["board"],
+        color,
+        current_game["captured_white_black"][0],
+        current_game["captured_white_black"][1],
+        4,
+    )
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time
 
@@ -108,6 +123,6 @@ async def update(sid, data):
     if result == -1:
         await sio.emit('boardUpdate', {"status": "forbidden", "reason": "Double-Three"}, to=sid)
         return
-    response = build_board_response(current_game, winner=result, elapsed=elapsed_time)
+    response = build_board_response(current_game, winner=result, elapsed=elapsed_time, color=2)
     print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
     await sio.emit('boardUpdate', response, to=sid)

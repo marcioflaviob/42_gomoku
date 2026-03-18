@@ -90,15 +90,16 @@ const BoardPage: React.FC = () => {
       socketRef.current = io(import.meta.env.VITE_API_URL);
 
       socketRef.current.on('boardUpdate', (data: Board) => {
+        if (winner !== 0) return; // Ignore updates if game is already won
+        if (data.color === 2) setLoading(false);
         if (data.board) setBoard(data.board);
         if (data.status) setStatus(data.status);
-        if (data.player1PiecesCaptured !== undefined) setPlayer1Captures(data.player1PiecesCaptured);
-        if (data.player2PiecesCaptured !== undefined) setPlayer2Captures(data.player2PiecesCaptured);
+        if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
+        if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
         if (data.aiResponseTime !== undefined) setAiResponseTime(data.aiResponseTime);
         if (data.canUndo !== undefined) setCanUndo(data.canUndo);
         if (data.canRedo !== undefined) setCanRedo(data.canRedo);
         if (data.winner !== undefined) setWinner(data.winner);
-        setLoading(false);
       });
 
       socketRef.current?.on('error', (err) => {
