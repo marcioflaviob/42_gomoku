@@ -113,7 +113,8 @@ async def update(sid, data):
         2,
         current_game["captured_white_black"][0],
         current_game["captured_white_black"][1],
-        4,
+        (row,col),
+        6,
     )
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time

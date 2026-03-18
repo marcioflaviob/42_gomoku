@@ -715,6 +715,6 @@ def evaluate_board(
     global compteur_heuristique
     compteur_heuristique += 1
     # if compteur_heuristique % 1000 == 0:
-    print(f"Player Score: {player_score}, Opponent Score: {opponent_score}, Capture Score: {capture_score}, Potential Score: {potential_score}. Returning total: {(player_score - opponent_score) + capture_score + potential_score}")
+    #print(f"Player Score: {player_score}, Opponent Score: {opponent_score}, Capture Score: {capture_score}, Potential Score: {potential_score}. Returning total: {(player_score - opponent_score) + capture_score + potential_score}")
 
     return (player_score - opponent_score) + capture_score + potential_score

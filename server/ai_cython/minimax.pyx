@@ -5,21 +5,53 @@ from ai_cython.heuristics import evaluate_board
 cimport numpy as cnp
 import time
 import numpy as np
+import random
 
 INF = float('inf')
 compteur_heuristique = 0
 
 cnp.import_array()
 
-cpdef set get_empty_neighbors(cnp.ndarray board, int row, int col):
+cdef unsigned long long ZOBRIST_TABLE[19][19][2]
+cdef bint zobrist_initialized = False
+cdef dict transposition_table = {}
+
+# Flags pour l'Alpha-Beta (Transposition Table)
+cdef int FLAG_EXACT = 0
+cdef int FLAG_ALPHA = 1  # Borne Supérieure (Cutoff)
+cdef int FLAG_BETA = 2   # Borne Inférieure (Cutoff)
+
+cpdef void init_zobrist():
+    """ Initialise les nombres aléatoires une seule fois au lancement du serveur. """
+    global zobrist_initialized
+    if zobrist_initialized:
+        return
+    cdef int r, c, p
+    for r in range(19):
+        for c in range(19):
+            for p in range(2):
+                ZOBRIST_TABLE[r][c][p] = random.getrandbits(64)
+    zobrist_initialized = True
+
+cdef unsigned long long compute_initial_hash(cnp.ndarray[cnp.int64_t, ndim=2] board):
+    """ Calcule le Hash complet du plateau au tout premier tour. """
+    cdef unsigned long long h = 0
+    cdef int r, c, val
+    for r in range(19):
+        for c in range(19):
+            val = board[r, c]
+            if val == 1:
+                h ^= ZOBRIST_TABLE[r][c][0]
+            elif val == 2:
+                h ^= ZOBRIST_TABLE[r][c][1]
+    return h
+
+cdef inline void update_candidates(int[:, :] candidate_board, int row, int col, int delta):
     """
-    Renvoie les cases vides dans un rayon de 2.
-    Optimisation Cython : On utilise des boucles C pures au lieu de la liste Python NEIGHBOR_OFFSETS_R2.
+    Ajoute ou retire l'influence d'un pion sur les cases environnantes.
+    delta = 1 (quand on pose un pion), delta = -1 (quand on le retire).
     """
-    cdef set neighbors = set()
     cdef int dr, dc, r, c
-    
-    # Boucles ultra-rapides en C
     for dr in range(-2, 3):
         for dc in range(-2, 3):
             if dr == 0 and dc == 0:
@@ -27,10 +59,7 @@ cpdef set get_empty_neighbors(cnp.ndarray board, int row, int col):
             r = row + dr
             c = col + dc
             if 0 <= r < 19 and 0 <= c < 19:
-                if board[r, c] == 0:  # 0 = EMPTY
-                    neighbors.add((r, c))
-    return neighbors
-
+                candidate_board[r, c] += delta
 
 cpdef double minimax(
     cnp.ndarray board,
@@ -41,23 +70,29 @@ cpdef double minimax(
     int player,
     int player1_captures,
     int player2_captures,
-    set current_candidates,
-    tuple last_move
+    int[:, :] candidate_board,
+    tuple last_move,
+    unsigned long long current_hash  # NOUVEAU PARAMÈTRE !
 ):
     global compteur_heuristique
     
+    # 1. SAUVEGARDE DES BORNES ORIGINALES (Pour le Flag)
+    cdef double original_alpha = alpha
+    cdef double original_beta = beta
     cdef int opponent = 2 if player == 1 else 1
-    cdef int current_player = player if is_maximizing else opponent
     
-    # Typage des variables de boucle pour une vitesse C
-    cdef double max_score, min_score, score
-    cdef int p1_cap, p2_cap, captured, r, c, m_r, m_c
-    cdef tuple move
-    cdef list captured_positions
-    cdef set next_candidates, new_neighbors
-
-    cdef int last_mover = opponent if is_maximizing else player
-
+    # 2. LECTURE DE LA TRANSPOSITION TABLE
+    # La clé est unique pour cette situation exacte.
+    cdef tuple tt_key = (current_hash, player1_captures, player2_captures, is_maximizing)
+    if tt_key in transposition_table:
+        stored_depth, stored_score, stored_flag = transposition_table[tt_key]
+        if stored_depth >= depth:
+            if stored_flag == FLAG_EXACT:
+                return stored_score
+            elif stored_flag == FLAG_ALPHA and stored_score <= alpha:
+                return stored_score
+            elif stored_flag == FLAG_BETA and stored_score >= beta:
+                return stored_score
     if check_win(board, last_move[0], last_move[1], "me", [player1_captures, player2_captures]):
         compteur_heuristique += 1
         winner_color = board[last_move[0]][last_move[1]]
@@ -67,91 +102,100 @@ cpdef double minimax(
             return -10_000_000
         # fallthrough: capture win for someone, evaluate normally
         return evaluate_board(board, player, player1_captures, player2_captures)
-
+    # 3. CONDITIONS D'ARRÊT
     if depth == 0:
         compteur_heuristique += 1
-        a = evaluate_board(board, player, player1_captures, player2_captures)
-        if compteur_heuristique % 1000 == 0:
-            print(f"value returned {a}")
-        return a
-    # Note : sort_candidates doit retourner une liste de tuples
-    candidates = sort_candidates(board, list(current_candidates), current_player)
+        return  evaluate_board(board, player, player1_captures, player2_captures)
+
+    cdef int current_player = player if is_maximizing else opponent
+    
+    cdef double max_score, min_score, score
+    cdef int p1_cap, p2_cap, captured, r, c, m_r, m_c
+    cdef tuple move
+    cdef list captured_positions
+    cdef set next_candidates, new_neighbors
+    cdef unsigned long long next_hash
+    cdef int flag
+
+    # (Supposons que sort_candidates est bien défini ailleurs et appelé ici)
+    candidates = sort_candidates(board, candidate_board, player)
     
     if not candidates:
-        score = evaluate_board(board, player, player1_captures, player2_captures)
-        print(f"No candidates left, returning score: {score}")
-        return score
+        return evaluate_board(board, player, player1_captures, player2_captures)
 
     if is_maximizing:
         max_score = -INF
         for move in candidates:
             m_r, m_c = move[0], move[1]
-            # --- DO (Appliquer le coup) ---
-            board[m_r, m_c] = current_player  # 🚨 CORRECTION : Il manquait la pose de la pierre !
             
+            # --- DO ---
+            board[m_r, m_c] = current_player
+            # MAGIE XOR : On ajoute la pierre au Hash
+            next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
+            update_candidates(candidate_board, m_r, m_c, 1)
             p1_cap = player1_captures
             p2_cap = player2_captures
             captured_positions = apply_capture(board, move, current_player)
+            
+            # MAGIE XOR : S'il y a eu capture, il faut effacer ces pierres du Hash !
+            for cap_r, cap_c in captured_positions:
+                next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][opponent - 1]
+                update_candidates(candidate_board, cap_r, cap_c, -1)
             captured = len(captured_positions)
-            
-            if current_player == 1:
-                p1_cap += captured
-            else:
-                p2_cap += captured
-
-            next_candidates = current_candidates.copy()
-            next_candidates.remove(move) 
-            
-            new_neighbors = get_empty_neighbors(board, m_r, m_c)
-            next_candidates.update(new_neighbors)
-            
+            if current_player == 1: p1_cap += captured
+            else: p2_cap += captured
             # --- EVALUATE ---
             score = minimax(
                 board, depth - 1, alpha, beta, False, player, 
-                p1_cap, p2_cap, next_candidates, move
+                p1_cap, p2_cap, candidate_board, move, next_hash # On passe le Hash !
             )
             
             max_score = max(max_score, score)
             alpha = max(alpha, score)
             
-            # --- UNDO (Annuler le coup) ---
+            # --- UNDO ---
             board[m_r, m_c] = 0
+            update_candidates(candidate_board, m_r, m_c, -1)
             for r, c in captured_positions:
                  board[r, c] = opponent
-                 
+                 update_candidates(candidate_board, r, c, 1)
             if beta <= alpha:
                 break
+                
+        # 4. ÉCRITURE DANS LA TRANSPOSITION TABLE
+        if max_score <= original_alpha: flag = FLAG_ALPHA
+        elif max_score >= beta: flag = FLAG_BETA
+        else: flag = FLAG_EXACT
+        transposition_table[tt_key] = (depth, max_score, flag)
         
-        #print(f"Maximizing node at depth {depth} returning score: {max_score}")
         return max_score
         
     else:
         min_score = INF
         for move in candidates:
             m_r, m_c = move[0], move[1]
-            # --- DO ---
-            board[m_r, m_c] = current_player  # 🚨 CORRECTION : Pose de la pierre adverse !
             
+            # --- DO ---
+            board[m_r, m_c] = current_player
+            next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
+            update_candidates(candidate_board, m_r, m_c, 1)
+
             p1_cap = player1_captures
             p2_cap = player2_captures
             captured_positions = apply_capture(board, move, current_player)
+            
+            for cap_r, cap_c in captured_positions:
+                next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][player - 1]
+                update_candidates(candidate_board, cap_r, cap_c, -1)
             captured = len(captured_positions)
-            
-            if current_player == 1:
-                p1_cap += captured
-            else:
-                p2_cap += captured
-                
-            next_candidates = current_candidates.copy()
-            next_candidates.remove(move) 
-            
-            new_neighbors = get_empty_neighbors(board, m_r, m_c)
-            next_candidates.update(new_neighbors)
-            
+            if current_player == 1: p1_cap += captured
+            else: p2_cap += captured
+    
+
             # --- EVALUATE ---
             score = minimax(
                 board, depth - 1, alpha, beta, True, player, 
-                p1_cap, p2_cap, next_candidates, move
+                p1_cap, p2_cap, candidate_board, move, next_hash
             )
             
             min_score = min(min_score, score)
@@ -159,26 +203,44 @@ cpdef double minimax(
             
             # --- UNDO ---
             board[m_r, m_c] = 0
+            update_candidates(candidate_board, m_r, m_c, -1)
             for r, c in captured_positions:
                 board[r, c] = player
-                
+                update_candidates(candidate_board, r, c, 1)
             if beta <= alpha:
                 break
                 
-        # print(f"Minimizing node at depth {depth} returning score: {min_score}")
+        # 4. ÉCRITURE DANS LA TRANSPOSITION TABLE
+        if min_score >= original_beta: flag = FLAG_BETA
+        elif min_score <= alpha: flag = FLAG_ALPHA
+        else: flag = FLAG_EXACT
+        transposition_table[tt_key] = (depth, min_score, flag)
+                
         return min_score
 
 
-
+# =============================================================================
+# 4. LA RACINE DE L'IA
+# =============================================================================
 cpdef tuple get_best_move(
     cnp.ndarray board,
     int player,
     int player1_captures,
     int player2_captures,
+    tuple last_move,
     int depth = 10
 ):
     global compteur_heuristique
-    compteur_heuristique = 0  # 🚨 Réinitialisation à chaque nouveau tour !
+    compteur_heuristique = 0
+    
+    # 1. Initialiser le hachage (exécuté qu'une fois)
+    init_zobrist()
+    
+    # 2. Vider le dictionnaire pour éviter que la RAM explose entre deux coups
+    transposition_table.clear()
+    
+    # 3. Calculer l'empreinte de départ de ce tour
+    cdef unsigned long long current_hash = compute_initial_hash(board)
     
     cdef double start = time.time()
     cdef int opponent = 2 if player == 1 else 1
@@ -193,126 +255,149 @@ cpdef tuple get_best_move(
     cdef list captured_positions
     cdef bint is_empty_board = True
     cdef set initial_candidates = set()
+    cdef unsigned long long next_hash
     
+
+   # 🚨 CRÉATION DE LA MATRICE D'INFLUENCE EN MÉMOIRE C
+    cdef cnp.ndarray[cnp.int32_t, ndim=2] cand_np = np.zeros((19, 19), dtype=np.int32)
+    cdef int[:, :] candidate_board = cand_np
+    
+    
+    # Remplissage initial de l'influence !
     for r in range(19):
         for c in range(19):
             if board[r, c] != 0:
                 is_empty_board = False
-                initial_candidates.update(get_empty_neighbors(board, r, c))
+                update_candidates(candidate_board, r, c, 1)
                 
     if is_empty_board:
         return ((9, 9), 0.0)
-
-    sorted_candidates = sort_candidates(board, list(initial_candidates), player)
-    
-    score_tab = []
+    sorted_candidates = sort_candidates(board, candidate_board, player)
     for move in sorted_candidates:
         m_r, m_c = move[0], move[1]
         
         # --- DO ---
         board[m_r, m_c] = player
-        
+        next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][player - 1]
+        update_candidates(candidate_board, m_r, m_c, 1)
         p1_cap = player1_captures
         p2_cap = player2_captures
         captured_positions = apply_capture(board, move, player)
-        captured = len(captured_positions)
         
-        if player == 1:
-            p1_cap += captured
-        else:
-            p2_cap += captured
+        for cap_r, cap_c in captured_positions:
+            next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][opponent - 1]
+            update_candidates(candidate_board, cap_r, cap_c, -1)
+        captured = len(captured_positions)
+        if player == 1: p1_cap += captured
+        else: p2_cap += captured
 
-        print(f"Evaluating move: {move}")
-
-        # --- EVALUATE ---
-        root_candidates = initial_candidates - {move}   # exclude the cell AI just occupied
-        root_candidates.update(get_empty_neighbors(board, m_r, m_c))  # add new neighbours
         score = minimax(
             board, depth - 1, alpha, beta, False, player, 
-            p1_cap, p2_cap, root_candidates, move
+            p1_cap, p2_cap, candidate_board, move, next_hash
         )
-
-        score_tab.append((score, move))
-
-        print(f"ROOT MOVE: {move} -> Score: {score}")
-        
         if score > best_score:
             best_score = score
             best_move = move
             
         alpha = max(alpha, best_score)
         
-        # --- UNDO (REVERSE ORDER!) ---
-        # Must restore board BEFORE undo to test next move on clean board
-        board_copy = board.copy()  # Create snapshot BEFORE undo
-        board[m_r, m_c] = 0
+        # --- UNDO ---
         for r, c in captured_positions:
             board[r, c] = opponent
-        
+            update_candidates(candidate_board, r, c, 1)
+        board[m_r, m_c] = 0        
+        update_candidates(candidate_board, m_r, m_c, -1)
         if best_score == INF:
             break
 
     cdef double elapsed = (time.time() - start) * 1000  # ms
-    print(f"Score tab for root moves: {score_tab}")
-    print(f"🧠 L'IA a terminé ! Nombre de plateaux évalués : {compteur_heuristique}")
+    print(f"🧠 L'IA a terminé ! Noeuds évalués : {compteur_heuristique}")
     print(f"AI move: {best_move} | score: {best_score} | time: {elapsed:.1f}ms | depth: {depth}")
+    
     return best_move, best_score
 
-cpdef list sort_candidates(cnp.ndarray board, list candidates, int player):
-    """
-    Trie les coups possibles. 
-    Version Cython : Utilise des boucles C pures au lieu du slicing NumPy pour une vitesse maximale.
-    """
-    cdef int board_size = board.shape[0]
-    cdef int center = board_size // 2
+cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board, int player):
+    cdef int center = 9
     cdef int opponent = 2 if player == 1 else 1
     
-    # Déclaration des variables C pour la boucle
-    cdef int r, c, dr, dc, nr, nc, val
-    cdef int allied_stones, enemy_stones
+    # Déclarations strictes Cython
+    cdef int r, c, nr, nc, dr, dc, d, step
+    cdef int count_ally, count_enemy
     cdef float score, distance
-    cdef tuple move
-    
-    # Liste qui contiendra des tuples (score, move)
     cdef list scored_moves = []
-
-    # Parcours de chaque candidat
-    for move in candidates:
-        r = move[0]
-        c = move[1]
-        
-        allied_stones = 0
-        enemy_stones = 0
-        
-        # 1. LA TACTIQUE (Boucles C ultra-rapides, zéro allocation mémoire)
-        for dr in range(-1, 2):
-            for dc in range(-1, 2):
-                if dr == 0 and dc == 0:
-                    continue
-                    
-                nr = r + dr
-                nc = c + dc
-                
-                # Vérification des limites du plateau
-                if 0 <= nr < board_size and 0 <= nc < board_size:
-                    val = board[nr, nc]
-                    if val == player:
-                        allied_stones += 1
-                    elif val == opponent:
-                        enemy_stones += 1
-
-        # 2. LE CENTRE ET LE SCORE
-        # abs() fonctionne très bien et très vite en C
-        distance = abs(r - center) + abs(c - center)
-        score = (allied_stones * 10) + (enemy_stones * 12) - (distance * 0.1)
-
-        # On stocke le score associé au coup
-        scored_moves.append((score, move))
-
-    # 3. LE TRI
-    # On trie la liste en fonction du premier élément du tuple (le score)
-    scored_moves.sort(reverse=True)
-
-    # 4. LE RETOUR
     cdef tuple item
-    return [item[1] for item in scored_moves]
+    
+    # Les 4 axes directionnels : Horizontal (-), Vertical (|), Diagonales (\ et /)
+    cdef int dirs[4][2]
+    dirs[0][0] = 0; dirs[0][1] = 1
+    dirs[1][0] = 1; dirs[1][1] = 0
+    dirs[2][0] = 1; dirs[2][1] = 1
+    dirs[3][0] = 1; dirs[3][1] = -1
+
+    for r in range(19):
+        for c in range(19):
+            # 🚨 Le filtre d'influence (on saute les cases inutiles instantanément)
+            if board[r, c] == 0 and candidate_board[r, c] > 0:
+                score = 0.0
+                
+                # Scan directionnel sur les 4 axes
+                for d in range(4):
+                    dr = dirs[d][0]
+                    dc = dirs[d][1]
+                    
+                    # 1. Compter les ALLIÉS consécutifs sur cet axe
+                    count_ally = 0
+                    for step in range(1, 5): # Direction positive
+                        nr = r + dr * step
+                        nc = c + dc * step
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == player:
+                            count_ally += 1
+                        else: break # La ligne est brisée
+                        
+                    for step in range(1, 5): # Direction négative
+                        nr = r - dr * step
+                        nc = c - dc * step
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == player:
+                            count_ally += 1
+                        else: break
+                        
+                    # 2. Compter les ENNEMIS consécutifs sur cet axe
+                    count_enemy = 0
+                    for step in range(1, 5): # Direction positive
+                        nr = r + dr * step
+                        nc = c + dc * step
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == opponent:
+                            count_enemy += 1
+                        else: break
+                        
+                    for step in range(1, 5): # Direction négative
+                        nr = r - dr * step
+                        nc = c - dc * step
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == opponent:
+                            count_enemy += 1
+                        else: break
+                        
+                    # 3. DISTRIBUTION DES POINTS (L'instinct de l'IA)
+                    # Opportunités offensives (On gagne)
+                    if count_ally >= 4: score += 100000.0
+                    elif count_ally == 3: score += 1000.0
+                    elif count_ally == 2: score += 100.0
+                    elif count_ally == 1: score += 10.0
+                    
+                    # Opportunités défensives (On bloque une menace vitale)
+                    if count_enemy >= 4: score += 80000.0
+                    elif count_enemy == 3: score += 800.0
+                    elif count_enemy == 2: score += 80.0
+                    elif count_enemy == 1: score += 8.0
+
+                # 4. Le départage spatial (On privilégie le centre à score tactique égal)
+                distance = abs(r - center) + abs(c - center)
+                score -= distance * 0.1
+                
+                scored_moves.append((score, (r, c)))
+
+    # Tri du meilleur score au pire
+    scored_moves.sort(reverse=True)
+    
+    # On retourne uniquement les 40 meilleurs coups (Beam Search)
+    return [item[1] for item in scored_moves[:10]]
