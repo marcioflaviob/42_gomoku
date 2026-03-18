@@ -4,14 +4,36 @@ from ai_cython.moves import apply_capture, check_win
 from ai_cython.heuristics import evaluate_board
 cimport numpy as cnp
 import time
+import numpy as np
 
 INF = float('inf')
 compteur_heuristique = 0
 
 cnp.import_array()
 
-def minimax(
-    cnp.ndarray[cnp.int64_t, ndim=2] board,
+cpdef set get_empty_neighbors(cnp.ndarray board, int row, int col):
+    """
+    Renvoie les cases vides dans un rayon de 2.
+    Optimisation Cython : On utilise des boucles C pures au lieu de la liste Python NEIGHBOR_OFFSETS_R2.
+    """
+    cdef set neighbors = set()
+    cdef int dr, dc, r, c
+    
+    # Boucles ultra-rapides en C
+    for dr in range(-2, 3):
+        for dc in range(-2, 3):
+            if dr == 0 and dc == 0:
+                continue
+            r = row + dr
+            c = col + dc
+            if 0 <= r < 19 and 0 <= c < 19:
+                if board[r, c] == 0:  # 0 = EMPTY
+                    neighbors.add((r, c))
+    return neighbors
+
+
+cpdef double minimax(
+    cnp.ndarray board,
     int depth,
     double alpha,
     double beta,
@@ -19,214 +41,249 @@ def minimax(
     int player,
     int player1_captures,
     int player2_captures,
-    tuple last_move = None
-) -> float:
-    """
-    Returns the heuristic score of the board for `player`.
-    Positive = good for player, Negative = bad for player.
-    """
-    cdef int opponent = 2 if player == 1 else 1
-    cdef object candidates
-    cdef int current_player
-    cdef double max_score, min_score, score
-    cdef int p1_cap, p2_cap, captured
-    cdef tuple move
+    set current_candidates,
+    tuple last_move
+):
     global compteur_heuristique
-    if depth == 0 or (last_move is not None and check_win(board,last_move[0],last_move[1],"me", [player1_captures,player2_captures])):
-        compteur_heuristique += 1 # +1 évaluation !
-        return evaluate_board(board, player, player1_captures, player2_captures)
-        #return random.randint(0, 1000)
-    candidates = get_candidate_moves(board)
+    
+    cdef int opponent = 2 if player == 1 else 1
+    cdef int current_player = player if is_maximizing else opponent
+    
+    # Typage des variables de boucle pour une vitesse C
+    cdef double max_score, min_score, score
+    cdef int p1_cap, p2_cap, captured, r, c, m_r, m_c
+    cdef tuple move
+    cdef list captured_positions
+    cdef set next_candidates, new_neighbors
+
+    if depth == 0 or check_win(board, last_move[0], last_move[1], "me", [player1_captures, player2_captures]):
+        compteur_heuristique += 1
+        a = evaluate_board(board, player, player1_captures, player2_captures)
+        if compteur_heuristique % 1000 == 0:
+            print(a)
+        return a
+    # Note : sort_candidates doit retourner une liste de tuples
+    candidates = sort_candidates(board, list(current_candidates), current_player)
+    
     if not candidates:
         return evaluate_board(board, player, player1_captures, player2_captures)
 
-    current_player = player if is_maximizing else opponent
-    candidates = sort_candidates(board, candidates, player)
     if is_maximizing:
         max_score = -INF
         for move in candidates:
-            # --- Apply move ---
-            board[move[0],move[1]] = player
-            p1_cap, p2_cap = player1_captures, player2_captures
-            captured = apply_capture(board, move, current_player)
+            m_r, m_c = move[0], move[1]
+            # --- DO (Appliquer le coup) ---
+            board[m_r, m_c] = current_player  # 🚨 CORRECTION : Il manquait la pose de la pierre !
+            
+            p1_cap = player1_captures
+            p2_cap = player2_captures
+            captured_positions = apply_capture(board, move, current_player)
+            captured = len(captured_positions)
+            
             if current_player == 1:
                 p1_cap += captured
             else:
                 p2_cap += captured
 
+            next_candidates = current_candidates.copy()
+            next_candidates.remove(move) 
+            
+            new_neighbors = get_empty_neighbors(board, m_r, m_c)
+            next_candidates.update(new_neighbors)
+            
+            # --- EVALUATE ---
             score = minimax(
-                board, depth - 1, alpha, beta,
-                False, player, p1_cap, p2_cap, move
+                board, depth - 1, alpha, beta, False, player, 
+                p1_cap, p2_cap, next_candidates, move
             )
+            
             max_score = max(max_score, score)
             alpha = max(alpha, score)
+            
+            # --- UNDO (Annuler le coup) ---
+            board[m_r, m_c] = 0
+            for r, c in captured_positions:
+                 board[r, c] = opponent
+                 
             if beta <= alpha:
-                break  # beta cutoff
-            board[move[0],move[1]] = 0
-            # for r, c in captured_positions:
-            #     board[r][c] = opponent
+                break
+                
         return max_score
-
+        
     else:
         min_score = INF
         for move in candidates:
-            # --- Apply move ---
-            board[move[0],move[1]] = opponent
-            p1_cap, p2_cap = player1_captures, player2_captures
-            captured = apply_capture(board, move, current_player)
+            m_r, m_c = move[0], move[1]
+            # --- DO ---
+            board[m_r, m_c] = current_player  # 🚨 CORRECTION : Pose de la pierre adverse !
+            
+            p1_cap = player1_captures
+            p2_cap = player2_captures
+            captured_positions = apply_capture(board, move, current_player)
+            captured = len(captured_positions)
+            
             if current_player == 1:
                 p1_cap += captured
             else:
                 p2_cap += captured
-
+                
+            next_candidates = current_candidates.copy()
+            next_candidates.remove(move) 
+            
+            new_neighbors = get_empty_neighbors(board, m_r, m_c)
+            next_candidates.update(new_neighbors)
+            
+            # --- EVALUATE ---
             score = minimax(
-                board, depth - 1, alpha, beta,
-                True, player, p1_cap, p2_cap, move
+                board, depth - 1, alpha, beta, True, player, 
+                p1_cap, p2_cap, next_candidates, move
             )
+            
             min_score = min(min_score, score)
             beta = min(beta, score)
+            
+            # --- UNDO ---
+            board[m_r, m_c] = 0
+            for r, c in captured_positions:
+                board[r, c] = player
+                
             if beta <= alpha:
-                break  # alpha cutoff
-            # for r, c in captured_positions:
-            #     board[r][c] = player
-            board[move[0],move[1]] = 0
-
+                break
+                
         return min_score
 
 
-def get_best_move(
-    cnp.ndarray[cnp.int64_t, ndim=2] board,
+cpdef tuple get_best_move(
+    cnp.ndarray board,
     int player,
     int player1_captures,
     int player2_captures,
     int depth = 10
-) -> tuple[tuple[int, int], float]:
-    """
-    Entry point for the AI. Returns (best_move, score).
-    """
-
-    start = time.time()
-
-    cdef object candidates = get_candidate_moves(board)
-    cdef object best_move = None
+):
+    global compteur_heuristique
+    compteur_heuristique = 0  # 🚨 Réinitialisation à chaque nouveau tour !
+    
+    cdef double start = time.time()
+    cdef int opponent = 2 if player == 1 else 1
+    
+    cdef tuple best_move = None
     cdef double best_score = -INF
     cdef double alpha = -INF
     cdef double beta = INF
-    cdef int p1_cap, p2_cap
-    cdef int captured
+    cdef int p1_cap, p2_cap, captured, r, c, m_r, m_c
+    cdef double score
     cdef tuple move
-    cdef cnp.ndarray[cnp.int64_t, ndim=2] board_copy
-    p1_cap, p2_cap = player1_captures, player2_captures
-    candidates = sort_candidates(board, candidates, player)
-    # best_move = get_best_move_parallel(board, candidates, depth, player, p1_cap, p2_cap)
-    # print(f"🧠 L'IA a terminé ! Nombre de plateaux évalués : {compteur_heuristique}")
-    cdef int i = 0
-    for move in candidates:
-        i = i + 1
-        #print(move)
-        board_copy = board.copy()
-        p1_cap, p2_cap = player1_captures, player2_captures
-        captured = apply_capture(board_copy, move, player)
+    cdef list captured_positions
+    cdef bint is_empty_board = True
+    cdef set initial_candidates = set()
+    
+    for r in range(19):
+        for c in range(19):
+            if board[r, c] != 0:
+                is_empty_board = False
+                initial_candidates.update(get_empty_neighbors(board, r, c))
+                
+    if is_empty_board:
+        return ((9, 9), 0.0)
+
+    sorted_candidates = sort_candidates(board, list(initial_candidates), player)
+    
+    for move in sorted_candidates:
+        m_r, m_c = move[0], move[1]
+        
+        # --- DO ---
+        board[m_r, m_c] = player
+        
+        p1_cap = player1_captures
+        p2_cap = player2_captures
+        captured_positions = apply_capture(board, move, player)
+        captured = len(captured_positions)
+        
         if player == 1:
             p1_cap += captured
         else:
             p2_cap += captured
 
+        # --- EVALUATE ---
         score = minimax(
-            board_copy, depth - 1, alpha, beta,
-            False, player, p1_cap, p2_cap, move
+            board, depth - 1, alpha, beta, False, player, 
+            p1_cap, p2_cap, initial_candidates, move
         )
-
+        
         if score > best_score:
             best_score = score
             best_move = move
-
+            
         alpha = max(alpha, best_score)
-
-        # Immediately return a winning move
+        
+        # --- UNDO ---
+        for r, c in captured_positions:
+            board[r, c] = opponent
+        board[m_r, m_c] = 0        
+        
         if best_score == INF:
             break
 
-    elapsed = (time.time() - start) * 1000  # ms
+    cdef double elapsed = (time.time() - start) * 1000  # ms
     print(f"🧠 L'IA a terminé ! Nombre de plateaux évalués : {compteur_heuristique}")
     print(f"AI move: {best_move} | score: {best_score} | time: {elapsed:.1f}ms | depth: {depth}")
-
     return best_move, best_score
 
-
-def sort_candidates(
-    cnp.ndarray[cnp.int64_t, ndim=2] board,
-    candidates: list[tuple[int, int]],
-    int player
-) -> list[tuple[int, int]]:
+cpdef list sort_candidates(cnp.ndarray board, list candidates, int player):
     """
-    Orders candidates by a cheap heuristic before full search.
-    Better ordering = more alpha-beta cutoffs = faster search.
-    Center-weighted distance score for now — replace with
-    shallow heuristic once evaluate_board is implemented.
+    Trie les coups possibles. 
+    Version Cython : Utilise des boucles C pures au lieu du slicing NumPy pour une vitesse maximale.
     """
-    center = BOARD_SIZE // 2
-
-    def quick_score(move):
-        r, c = move
-        # Prefer moves closer to center
-        distance = abs(r - center) + abs(c - center)
-        return -distance  # negative because we sort descending
-
-    return sorted(candidates, key=quick_score, reverse=True)
-
-
-import concurrent.futures
-
-def evaluer_un_seul_coup(args):
-    """
-    Cette fonction sera envoyée sur un cœur de processeur indépendant.
-    Elle prend un coup, le joue, et lance un minimax classique.
-    """
-    cdef cnp.ndarray[cnp.int64_t, ndim=2] board
+    cdef int board_size = board.shape[0]
+    cdef int center = board_size // 2
+    cdef int opponent = 2 if player == 1 else 1
+    
+    # Déclaration des variables C pour la boucle
+    cdef int r, c, dr, dc, nr, nc, val
+    cdef int allied_stones, enemy_stones
+    cdef float score, distance
     cdef tuple move
-    cdef int depth, player, p1_cap, p2_cap
-    cdef int row, col
-    cdef double score
-    cdef cnp.ndarray[cnp.int64_t, ndim=2] board_local
-
-    board, move, depth, player, p1_cap, p2_cap = args
     
-    # On simule le coup (ici on triche un peu pour l'exemple, faites votre DO/UNDO)
-    board_local = board.copy() # Ici la copie est permise car c'est la racine !
-    row, col = move
-    board_local[row][col] = player
-    
-    # On lance le minimax normal (qui a son propre alpha/beta pour ce sous-arbre)
-    score = minimax(
-        board_local, depth - 1, float('-inf'), float('inf'),
-        False, player, p1_cap, p2_cap, move
-    )
-    
-    return (score, move)
+    # Liste qui contiendra des tuples (score, move)
+    cdef list scored_moves = []
 
-
-def get_best_move_parallel(board, candidates, depth, player, p1_cap, p2_cap):
-    """
-    La fonction principale qui distribue le travail aux cœurs du CPU.
-    """
-    # On prépare les paquets de données pour chaque cœur
-    cdef list taches = []
+    # Parcours de chaque candidat
     for move in candidates:
-        taches.append((board, move, depth, player, p1_cap, p2_cap))
-    
-    meilleur_score = float('-inf')
-    meilleur_coup = None
-    
-    # On ouvre un "Pool" de processus (1 processus par cœur physique de votre PC)
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        # map() distribue les tâches et récupère les résultats au fur et à mesure
-        resultats = executor.map(evaluer_un_seul_coup, taches)
+        r = move[0]
+        c = move[1]
         
-        # On compare les résultats finaux de chaque cœur
-        for score, move in resultats:
-            if score > meilleur_score:
-                meilleur_score = score
-                meilleur_coup = move
+        allied_stones = 0
+        enemy_stones = 0
+        
+        # 1. LA TACTIQUE (Boucles C ultra-rapides, zéro allocation mémoire)
+        for dr in range(-1, 2):
+            for dc in range(-1, 2):
+                if dr == 0 and dc == 0:
+                    continue
+                    
+                nr = r + dr
+                nc = c + dc
                 
-    return meilleur_coup
+                # Vérification des limites du plateau
+                if 0 <= nr < board_size and 0 <= nc < board_size:
+                    val = board[nr, nc]
+                    if val == player:
+                        allied_stones += 1
+                    elif val == opponent:
+                        enemy_stones += 1
+
+        # 2. LE CENTRE ET LE SCORE
+        # abs() fonctionne très bien et très vite en C
+        distance = abs(r - center) + abs(c - center)
+        score = (allied_stones * 10) + (enemy_stones * 12) - (distance * 0.1)
+
+        # On stocke le score associé au coup
+        scored_moves.append((score, move))
+
+    # 3. LE TRI
+    # On trie la liste en fonction du premier élément du tuple (le score)
+    scored_moves.sort(reverse=True)
+
+    # 4. LE RETOUR
+    cdef tuple item
+    return [item[1] for item in scored_moves]

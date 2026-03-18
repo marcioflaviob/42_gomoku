@@ -102,7 +102,7 @@ async def update(sid, data):
         await sio.emit('boardUpdate', {"status": "forbidden", "reason": "Double-Three"}, to=sid)
         return
     response = build_board_response(current_game, winner=result, elapsed=0, color=color)
-    print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
+    #print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
     await sio.emit('boardUpdate', response, to=sid)
     await sio.sleep(0)
 
@@ -110,7 +110,7 @@ async def update(sid, data):
     best_move, _best_score = await asyncio.to_thread(
         get_best_move,
         current_game["board"],
-        color,
+        2,
         current_game["captured_white_black"][0],
         current_game["captured_white_black"][1],
         4,
@@ -124,5 +124,5 @@ async def update(sid, data):
         await sio.emit('boardUpdate', {"status": "forbidden", "reason": "Double-Three"}, to=sid)
         return
     response = build_board_response(current_game, winner=result, elapsed=elapsed_time, color=2)
-    print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
+    #print(f"🔄 Mise à jour du plateau pour {sid}: {response}")
     await sio.emit('boardUpdate', response, to=sid)
