@@ -4,3 +4,4 @@ __pycache__/
 build/
 ai_cython/*.c
 ai_cython/*.cpython-*.so
+.DS_Store

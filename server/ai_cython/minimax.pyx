@@ -56,17 +56,31 @@ cpdef double minimax(
     cdef list captured_positions
     cdef set next_candidates, new_neighbors
 
-    if depth == 0 or check_win(board, last_move[0], last_move[1], "me", [player1_captures, player2_captures]):
+    cdef int last_mover = opponent if is_maximizing else player
+
+    if check_win(board, last_move[0], last_move[1], "me", [player1_captures, player2_captures]):
+        compteur_heuristique += 1
+        winner_color = board[last_move[0]][last_move[1]]
+        if winner_color == player:
+            return 10_000_000
+        elif winner_color == opponent:
+            return -10_000_000
+        # fallthrough: capture win for someone, evaluate normally
+        return evaluate_board(board, player, player1_captures, player2_captures)
+
+    if depth == 0:
         compteur_heuristique += 1
         a = evaluate_board(board, player, player1_captures, player2_captures)
         if compteur_heuristique % 1000 == 0:
-            print(a)
+            print(f"value returned {a}")
         return a
     # Note : sort_candidates doit retourner une liste de tuples
     candidates = sort_candidates(board, list(current_candidates), current_player)
     
     if not candidates:
-        return evaluate_board(board, player, player1_captures, player2_captures)
+        score = evaluate_board(board, player, player1_captures, player2_captures)
+        print(f"No candidates left, returning score: {score}")
+        return score
 
     if is_maximizing:
         max_score = -INF
@@ -107,7 +121,8 @@ cpdef double minimax(
                  
             if beta <= alpha:
                 break
-                
+        
+        #print(f"Maximizing node at depth {depth} returning score: {max_score}")
         return max_score
         
     else:
@@ -150,7 +165,9 @@ cpdef double minimax(
             if beta <= alpha:
                 break
                 
+        # print(f"Minimizing node at depth {depth} returning score: {min_score}")
         return min_score
+
 
 
 cpdef tuple get_best_move(
@@ -188,6 +205,7 @@ cpdef tuple get_best_move(
 
     sorted_candidates = sort_candidates(board, list(initial_candidates), player)
     
+    score_tab = []
     for move in sorted_candidates:
         m_r, m_c = move[0], move[1]
         
@@ -204,11 +222,19 @@ cpdef tuple get_best_move(
         else:
             p2_cap += captured
 
+        print(f"Evaluating move: {move}")
+
         # --- EVALUATE ---
+        root_candidates = initial_candidates - {move}   # exclude the cell AI just occupied
+        root_candidates.update(get_empty_neighbors(board, m_r, m_c))  # add new neighbours
         score = minimax(
             board, depth - 1, alpha, beta, False, player, 
-            p1_cap, p2_cap, initial_candidates, move
+            p1_cap, p2_cap, root_candidates, move
         )
+
+        score_tab.append((score, move))
+
+        print(f"ROOT MOVE: {move} -> Score: {score}")
         
         if score > best_score:
             best_score = score
@@ -216,15 +242,18 @@ cpdef tuple get_best_move(
             
         alpha = max(alpha, best_score)
         
-        # --- UNDO ---
+        # --- UNDO (REVERSE ORDER!) ---
+        # Must restore board BEFORE undo to test next move on clean board
+        board_copy = board.copy()  # Create snapshot BEFORE undo
+        board[m_r, m_c] = 0
         for r, c in captured_positions:
             board[r, c] = opponent
-        board[m_r, m_c] = 0        
         
         if best_score == INF:
             break
 
     cdef double elapsed = (time.time() - start) * 1000  # ms
+    print(f"Score tab for root moves: {score_tab}")
     print(f"🧠 L'IA a terminé ! Nombre de plateaux évalués : {compteur_heuristique}")
     print(f"AI move: {best_move} | score: {best_score} | time: {elapsed:.1f}ms | depth: {depth}")
     return best_move, best_score
