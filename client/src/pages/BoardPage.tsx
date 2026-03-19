@@ -170,18 +170,20 @@ const BoardPage: React.FC = () => {
 
     const handlePlayAgain = () => {
       if (winner === 0 || loading) return;
-      if (mode === GameMode.AIBattle) {
-        setWinner(0);
-        setStatus(MoveStatus.Success);
-        setProRuleMessage('');
-        setCurrentPlayer(1);
-        setLoading(true);
-        socketRef.current?.emit('update', { move: 'start_ai_battle', mode: GameMode.AIBattle, showHints: false });
-        return;
-      }
-      socketRef.current?.emit('update', { move: 'reset' });
+      setWinner(0);
+      setStatus(MoveStatus.Success);
+      setProRuleMessage('');
       setCurrentPlayer(1);
       setLoading(true);
+      setBoard(Array.from({ length: BOARD_SIZE }, () =>
+        Array.from({ length: BOARD_SIZE }, () => Status.Empty)
+      ));
+      setHeatmap(createEmptyHeatmap());
+      if (mode === GameMode.AIBattle) {
+        socketRef.current?.emit('update', { move: 'start_ai_battle', mode: GameMode.AIBattle, showHints: false });
+      } else {
+        socketRef.current?.emit('update', { move: 'reset' });
+      }
     };
 
     const getClassNameForPiece = (piece: Status) => {
@@ -205,7 +207,6 @@ const BoardPage: React.FC = () => {
       socketRef.current = io(import.meta.env.VITE_API_URL);
 
       socketRef.current.on('boardUpdate', (data: Board) => {
-        if (winnerRef.current !== 0) return; // Ignore updates if game is already won
         if (modeRef.current === GameMode.AIBattle) {
           setLoading(data.winner === 0);
         } else if ((data.color === 2) || (modeRef.current === GameMode.Multiplayer)) {
@@ -253,52 +254,56 @@ const BoardPage: React.FC = () => {
     <div className={`flex flex-col items-center justify-start gap-6 p-6 h-full ${theme === 'dark' ? 'bg-gray-900' : 'bg-amber-50'}`}>
       <div className="flex items-center gap-4">
         <h1 className={`text-3xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Gomoku Board</h1>
-        <button
-          onClick={handleUndo}
-          disabled={!canUndo || loading}
-          className={`px-3 py-1 rounded font-semibold disabled:opacity-40 transition-colors ${
-            theme === 'dark' 
-              ? 'bg-gray-700 text-white hover:bg-gray-600' 
-              : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-          }`}
-        >⟲ Undo</button>
-        <button
-          onClick={handleRedo}
-          disabled={!canRedo || loading}
-          className={`px-3 py-1 rounded font-semibold disabled:opacity-40 transition-colors ${
-            theme === 'dark' 
-              ? 'bg-gray-700 text-white hover:bg-gray-600' 
-              : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-          }`}
-        >⟳ Redo</button>
-        {winner !== 0 && (
-          <button
-            onClick={handlePlayAgain}
-            disabled={loading}
-            className="px-3 py-1 rounded text-white font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-700 transition-colors"
-          >Play Again</button>
+        { mode !== GameMode.AIBattle && (
+          <>
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo || loading}
+              className={`px-3 py-1 rounded font-semibold disabled:opacity-40 transition-colors ${
+                theme === 'dark' 
+                  ? 'bg-gray-700 text-white hover:bg-gray-600' 
+                  : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+              }`}
+            >⟲ Undo</button>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo || loading}
+              className={`px-3 py-1 rounded font-semibold disabled:opacity-40 transition-colors ${
+                theme === 'dark' 
+                  ? 'bg-gray-700 text-white hover:bg-gray-600' 
+                  : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+              }`}
+            >⟳ Redo</button>
+            {winner !== 0 && (
+              <button
+                onClick={handlePlayAgain}
+                disabled={loading}
+                className="px-3 py-1 rounded text-white font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-700 transition-colors"
+              >Play Again</button>
+            )}
+            {/* Switches for hints and heatmap */}
+            <div className="flex items-center gap-2 ml-6">
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showHints}
+                  onChange={() => setShowHints((prev) => !prev)}
+                  className="accent-blue-500 mr-1"
+                />
+                <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Hints</span>
+              </label>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showHeatmap}
+                  onChange={() => setShowHeatmap((prev) => !prev)}
+                  className="accent-red-500 mr-1"
+                />
+                <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Heatmap</span>
+              </label>
+            </div>
+          </>
         )}
-        {/* Switches for hints and heatmap */}
-        <div className="flex items-center gap-2 ml-6">
-          <label className="flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showHints}
-              onChange={() => setShowHints((prev) => !prev)}
-              className="accent-blue-500 mr-1"
-            />
-            <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Hints</span>
-          </label>
-          <label className="flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showHeatmap}
-              onChange={() => setShowHeatmap((prev) => !prev)}
-              className="accent-red-500 mr-1"
-            />
-            <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>Heatmap</span>
-          </label>
-        </div>
       </div>
 
       {/* Game stats */}
