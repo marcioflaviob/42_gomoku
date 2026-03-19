@@ -151,7 +151,7 @@ const BoardPage: React.FC = () => {
         if (data.status !== MoveStatus.Hint) setStatus(data.status);
         if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
         if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
-        if (data.aiResponseTime !== undefined) setAiResponseTime(data.aiResponseTime);
+        if (data.aiResponseTime) setAiResponseTime(data.aiResponseTime);
         if (data.canUndo !== undefined) setCanUndo(data.canUndo);
         if (data.canRedo !== undefined) setCanRedo(data.canRedo);
         if (data.winner !== undefined) setWinner(data.winner);

@@ -1,11 +1,12 @@
 # cython: boundscheck=False, wraparound=False, cdivision=True, nonecheck=False, initializedcheck=False
 
-from ai.moves import apply_capture, check_win
-from ai.heuristics import evaluate_board_full_mv
+from ai.moves cimport apply_capture, check_win
+from ai.heuristics cimport evaluate_board_full_mv
 cimport numpy as cnp
+from libc.stdlib cimport rand, srand, RAND_MAX
+from libc.time cimport time as c_time
 import time
 import numpy as np
-import random
 
 INF = float('inf')
 compteur_heuristique = 0
@@ -198,11 +199,18 @@ cpdef void init_zobrist():
     global zobrist_initialized
     if zobrist_initialized:
         return
+    srand(<unsigned int>c_time(NULL))
     cdef int r, c, p
+    cdef unsigned long long v
     for r in range(19):
         for c in range(19):
             for p in range(2):
-                ZOBRIST_TABLE[r][c][p] = random.getrandbits(64)
+                # Build a 64-bit value from four 16-bit rand() calls
+                v  = (<unsigned long long>(rand() & 0xFFFF))
+                v |= (<unsigned long long>(rand() & 0xFFFF)) << 16
+                v |= (<unsigned long long>(rand() & 0xFFFF)) << 32
+                v |= (<unsigned long long>(rand() & 0xFFFF)) << 48
+                ZOBRIST_TABLE[r][c][p] = v
     zobrist_initialized = True
 
 

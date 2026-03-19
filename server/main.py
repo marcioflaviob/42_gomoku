@@ -4,6 +4,7 @@ import time
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
+from moves import play, undo, redo
 
 class Status:
     Empty = 0
@@ -12,11 +13,12 @@ class Status:
     Suggested = 3
 
 try:
-    from ai.moves import play, undo, redo, apply_capture
+    # from ai.moves import play, undo, redo, apply_capture
     from ai.minimax import get_best_move, get_heatmap_scores, get_candidates_for_heatmap
-except ImportError:
+except ImportError as e:
     # Fallback to pure Python modules when Cython extensions are not built yet.
     print("⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️")
+    print(f"error: {e}")
     # from ai.moves import play, undo, redo
     # from ai.minimax import get_best_move
 
@@ -232,7 +234,7 @@ async def update(sid, data):
 
 
     start_time = time.perf_counter()
-    best_move = await compute_best_move(current_game, Status.Player2, (row, col), depth=6)
+    best_move = await compute_best_move(current_game, Status.Player2, (row, col), depth=10)
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time
 

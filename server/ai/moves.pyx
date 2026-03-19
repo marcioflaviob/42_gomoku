@@ -1,254 +1,156 @@
+# cython: boundscheck=False, wraparound=False, cdivision=True, nonecheck=False, initializedcheck=False
+
+cimport numpy as cnp
 import numpy as np
 
-BOARD_SIZE = 19
-EMPTY = 0
+cnp.import_array()
 
-def get_possible_captures(board: np.ndarray, player: int) -> list[tuple[int, int]]:
-    """
-    Returns all moves where `player` can capture a pair of opponent stones.
-    Pattern: player, opp, opp, EMPTY  →  player plays at EMPTY
-         or: EMPTY, opp, opp, player  →  player plays at EMPTY
-    """
-    opponent = 2 if player == 1 else 1
-    captures = []
-    directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+DEF BOARD_SIZE = 19
+DEF EMPTY      = 0
 
-    for row in range(BOARD_SIZE):
-        for col in range(BOARD_SIZE):
-            if board[row][col] != EMPTY:
-                continue
-            for dr, dc in directions:
-                # Check pattern: EMPTY, opp, opp, player
-                r1, c1 = row + dr, col + dc
-                r2, c2 = row + 2 * dr, col + 2 * dc
-                r3, c3 = row + 3 * dr, col + 3 * dc
-                if (
-                    0 <= r3 < BOARD_SIZE and 0 <= c3 < BOARD_SIZE
-                    and board[r1][c1] == opponent
-                    and board[r2][c2] == opponent
-                    and board[r3][c3] == player
-                ):
-                    captures.append((row, col))
+cpdef list apply_capture(cnp.ndarray board, tuple move, int player):
+    cdef cnp.int64_t[:, :] bv = board
+    cdef int row      = move[0]
+    cdef int col      = move[1]
+    cdef int opponent = 3 - player
 
-    return captures
+    bv[row, col] = player
 
+    # 8 unit directions (all 4 axes, both signs)
+    cdef int DRS[8]
+    cdef int DCS[8]
+    DRS[0] =  0; DCS[0] =  1   # right
+    DRS[1] =  0; DCS[1] = -1   # left
+    DRS[2] =  1; DCS[2] =  0   # down
+    DRS[3] = -1; DCS[3] =  0   # up
+    DRS[4] =  1; DCS[4] =  1   # down-right
+    DRS[5] = -1; DCS[5] = -1   # up-left
+    DRS[6] =  1; DCS[6] = -1   # down-left
+    DRS[7] = -1; DCS[7] =  1   # up-right
 
-def apply_capture(board: np.ndarray, move: tuple[int, int], player: int) -> list[tuple[int, int]]:
-    """
-    Places a stone at move for player, removes any captured pairs.
-    Returns number of stones captured (0 or 2 per direction, can be multiple).
-    """
-    row, col = move
-    board[row][col] = player
-    opponent = 2 if player == 1 else 1
-    captured = 0
-    directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-    captured_positions = []
-    for dr, dc in directions:
-        for sign in (1, -1):
-            r1, c1 = row + sign * dr, col + sign * dc
-            r2, c2 = row + sign * 2 * dr, col + sign * 2 * dc
-            r3, c3 = row + sign * 3 * dr, col + sign * 3 * dc
-            if (
-                0 <= r3 < BOARD_SIZE and 0 <= c3 < BOARD_SIZE
-                and board[r1][c1] == opponent
-                and board[r2][c2] == opponent
-                and board[r3][c3] == player
-            ):
-                board[r1][c1] = EMPTY
-                board[r2][c2] = EMPTY
-                captured_positions.append((r1,c1))
-                captured_positions.append((r2,c2))
-                captured += 2
-    return captured_positions
+    cdef int d, dr, dc
+    cdef int r1, c1, r2, c2, r3, c3
+    cdef list captured = []
 
-def create_snapshot(state):
-    return {
-        "board": state["board"].copy(), # Indispensable pour copier un array NumPy !
-        "last_play": state["last_play"].copy(),
-        "captured_white_black": state["captured_white_black"].copy()
-    }
+    for d in range(8):
+        dr = DRS[d]; dc = DCS[d]
+        r1 = row + dr;     c1 = col + dc
+        r2 = row + 2 * dr; c2 = col + 2 * dc
+        r3 = row + 3 * dr; c3 = col + 3 * dc
+        if (0 <= r3 < BOARD_SIZE and 0 <= c3 < BOARD_SIZE and
+                bv[r1, c1] == opponent and
+                bv[r2, c2] == opponent and
+                bv[r3, c3] == player):
+            bv[r1, c1] = EMPTY
+            bv[r2, c2] = EMPTY
+            captured.append((r1, c1))
+            captured.append((r2, c2))
 
-def restore_snapshot(state, snapshot):
-    state["board"] = snapshot["board"].copy()
-    state["last_play"] = snapshot["last_play"].copy()
-    state["captured_white_black"] = snapshot["captured_white_black"].copy()
+    return captured
 
-def undo(state):
-    if not state["history"]:
-        return False
-    state["future"].append(create_snapshot(state))
-    previous_snapshot = state["history"].pop()
-    restore_snapshot(state, previous_snapshot)
-    return True
-
-def redo(state):
-    if not state["future"]:
-        return False
-    state["history"].append(create_snapshot(state))
-    next_snapshot = state["future"].pop()
-    restore_snapshot(state, next_snapshot)
-    return True
-
-def play(game_state, row, col, color):
-    board = game_state["board"]
-    captured_white_black = game_state["captured_white_black"]
-    last_play = game_state["last_play"]
-    if not (0 <= row < 19 and 0 <= col < 19):
-        return -1
-    if check_double_three(board,row, col, color):
-        return -1
-    game_state["history"].append(create_snapshot(game_state))
-    game_state["future"].clear()
-    board[row][col] = color
-    check_capture(board,row, col, "remove",captured_white_black)
-    check_win_result = check_win(board,row, col,"me",captured_white_black)
-    if check_win_result:
-        return check_win_result
-    if  last_play != [0, -1] and check_win(board,last_play[0], last_play[1], "oppo",captured_white_black):
-        opposite_color = 2 if color == 1 else 1
-        return opposite_color
-    game_state["last_play"] = [row, col]
-    return 0
-
-def check_win(board, last_row, last_col, winner,captured_white_black):
-    color = board[last_row][last_col]
-    if color == 0:
+cpdef int check_win(cnp.ndarray board, int row, int col,
+                    str winner, list captures):
+    cdef cnp.int64_t[:, :] bv = board
+    cdef int color = <int>bv[row, col]
+    if color == EMPTY:
         return 0
-    if (captured_white_black[color - 1] >= 10 ):
+
+    # Capture-count win
+    if captures[color - 1] >= 10:
         return color
-    directions = [
-        (0, 1),  (1, 0),
-        (1, 1),  (1, -1)
-    ]
-    
-    for dr, dc in directions:
+
+    cdef int DRS[4]
+    cdef int DCS[4]
+    DRS[0] = 0; DCS[0] = 1   # horizontal
+    DRS[1] = 1; DCS[1] = 0   # vertical
+    DRS[2] = 1; DCS[2] = 1   # diagonal
+    DRS[3] = 1; DCS[3] = -1  # anti-diagonal
+
+    cdef int d, dr, dc, i
+    cdef int r, c, count
+
+    # win_line stored as flat pairs: [r0,c0, r1,c1, ...]  max 9 stones
+    cdef int win_r[9]
+    cdef int win_c[9]
+    cdef int wlen
+
+    for d in range(4):
+        dr = DRS[d]; dc = DCS[d]
         count = 1
-        win_line = [[last_row, last_col]]       
-        # Sens direct (+)
+        wlen  = 1
+        win_r[0] = row; win_c[0] = col
+
         for i in range(1, 5):
-            r = last_row + (dr * i)
-            c = last_col + (dc * i)
-            if 0 <= r < 19 and 0 <= c < 19 and board[r][c] == color:
-                count += 1
-                win_line.append([r, c])
+            r = row + dr * i; c = col + dc * i
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and bv[r, c] == color:
+                win_r[wlen] = r; win_c[wlen] = c
+                wlen += 1; count += 1
             else:
                 break
-        # Sens opposé (-)
         for i in range(1, 5):
-            r = last_row - (dr * i)
-            c = last_col - (dc * i)
-            if 0 <= r < 19 and 0 <= c < 19 and board[r][c] == color:
-                count += 1
-                win_line.append([r, c])
+            r = row - dr * i; c = col - dc * i
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and bv[r, c] == color:
+                win_r[wlen] = r; win_c[wlen] = c
+                wlen += 1; count += 1
             else:
                 break
+
         if count >= 5:
-            if not check_no_capture_in_win_line(board,win_line, color) or winner == "oppo":
+            # If playing as "oppo" skip capture-safety check (opponent already won)
+            if winner == "oppo" or not _win_line_capturable(bv, win_r, win_c, wlen, color):
                 return color
+
     return 0
-def check_capture(board, last_row, last_col, action,captured_white_black):
-    color = board[last_row][last_col]
-    if color == 0:
-        return 0
-    opposite_color = 2 if color == 1 else 1
-    pieces_captured_this_turn = 0
-    directions = [
-        (0, 1), (0, -1),   # Droite, Gauche
-        (1, 0), (-1, 0),   # Bas, Haut
-        (1, 1), (-1, -1),  # Diagonale descendante
-        (1, -1), (-1, 1)   # Diagonale ascendante
-    ]
 
-    for dr, dc in directions:
-        r1, c1 = last_row + dr, last_col + dc
-        r2, c2 = last_row + 2 * dr, last_col + 2 * dc
-        r3, c3 = last_row + 3 * dr, last_col + 3 * dc
-        
-        if 0 <= r3 < 19 and 0 <= c3 < 19:
-            if (board[r1][c1] == opposite_color and
-                board[r2][c2] == opposite_color and
-                board[r3][c3] == color):
-                if action == "remove":
-                    board[r1][c1] = 0
-                    board[r2][c2] = 0
-                pieces_captured_this_turn += 2
-                
-    if pieces_captured_this_turn > 0:
-        if color == 1:
-            captured_white_black[0] += pieces_captured_this_turn
-        elif color == 2:
-            captured_white_black[1] += pieces_captured_this_turn
-    return pieces_captured_this_turn
-def check_no_capture_in_win_line(board, win_line, color):
-    directions = [
-        (0, 1),   # Horizontal
-        (1, 0),   # Vertical
-        (1, 1),   # Diagonale descendante
-        (1, -1)   # Diagonale ascendante
-    ]
-    patterns = ["OXX.", ".XXO"]
-    for row, col in win_line:
-        for dr, dc in directions:
-            line_string = ""                
-            for i in range(-2, 3):
-                r = row + (dr * i)
-                c = col + (dc * i)
-                if 0 <= r < 19 and 0 <= c < 19:
-                    cell = board[r][c]
-                    if cell == color:
-                        line_string += "X"
-                    elif cell == 0:
-                        line_string += "."
-                    else:
-                        line_string += "O"
-                else:
-                    line_string += "W"
-            for pattern in patterns:
-                if pattern in line_string:
-                    return 1       
-    return 0 
-def check_double_three(board, last_row, last_col, color):
-    last_row = int(last_row)
-    last_col = int(last_col)
 
-    if color == 0:
-        return 0
-    directions = [
-        (0, 1),  (1, 0),
-        (1, 1),  (1, -1) 
-    ]
-    patterns = [
-        "..XXX.",
-        ".XXX..",
-        ".X.XX.",
-        ".XX.X."
-    ]
-    free_three_count = 0
-    for dr, dc in directions:
-        line_string = ""
-        for i in range(-4, 5):
-            r = last_row + (dr * i)
-            c = last_col + (dc * i)
-            if 0 <= r < 19 and 0 <= c < 19:
-                cell = board[r][c]
-                if cell == color or i == 0:
-                    line_string += "X"
-                elif cell == 0:
-                    line_string += "."
+# ---------------------------------------------------------------------------
+# Internal helper: returns True if any stone in the win line can be captured
+# ---------------------------------------------------------------------------
+
+cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
+                                int* win_r, int* win_c, int wlen,
+                                int color) nogil:
+    """
+    Returns 1 if any stone in the win line sits in a capture pattern
+    (opponent can remove it), 0 if the line is safe.
+
+    Pattern checked (for each cell in the win line, each of 4 directions):
+      OXX.  or  .XXO   — where X = color, O = opponent, . = EMPTY
+    We look at a 5-cell window centred on the win-line cell.
+    """
+    cdef int DRS[4]
+    cdef int DCS[4]
+    DRS[0] = 0; DCS[0] = 1
+    DRS[1] = 1; DCS[1] = 0
+    DRS[2] = 1; DCS[2] = 1
+    DRS[3] = 1; DCS[3] = -1
+
+    cdef int opponent = 3 - color
+    cdef int k, d, dr, dc, i
+    cdef int r, c
+    cdef int seg[5]   # 5-cell window centred on the stone
+    cdef int v
+
+    for k in range(wlen):
+        r = win_r[k]; c = win_c[k]
+        for d in range(4):
+            dr = DRS[d]; dc = DCS[d]
+            # Fill 5-cell window: positions -2,-1,0,+1,+2
+            for i in range(5):
+                rr = r + dr * (i - 2)
+                cc = c + dc * (i - 2)
+                if 0 <= rr < BOARD_SIZE and 0 <= cc < BOARD_SIZE:
+                    seg[i] = <int>bv[rr, cc]
                 else:
-                    line_string += "O"
-            else:
-                line_string += "O" 
-                
-        is_free_three = False
-        for pattern in patterns:
-            if pattern in line_string:
-                is_free_three = True
-                break 
-        if is_free_three:
-            free_three_count += 1
-    if free_three_count >= 2:
-        return 1
-        
+                    seg[i] = -1   # wall sentinel
+
+            # OXX.  →  seg[0]=opponent, seg[1]=color, seg[2]=color, seg[3]=EMPTY
+            if (seg[0] == opponent and seg[1] == color and
+                    seg[2] == color and seg[3] == EMPTY):
+                return 1
+            # .XXO  →  seg[1]=EMPTY, seg[2]=color, seg[3]=color, seg[4]=opponent
+            if (seg[1] == EMPTY and seg[2] == color and
+                    seg[3] == color and seg[4] == opponent):
+                return 1
+
     return 0
