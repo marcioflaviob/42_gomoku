@@ -288,9 +288,8 @@ cpdef double negascout(
     cdef int lm_c = last_move[1]
     if check_win(board, lm_r, lm_c, "me", [player1_captures, player2_captures]):
         compteur_heuristique += 1
-        winner_color = board[lm_r, lm_c]
-        # Score from current_player's POV: win → +big, loss → -big
-        if winner_color == current_player:
+        winner_color = <int>board[lm_r, lm_c]
+        if winner_color == player:
             return 10_000_000.0
         elif winner_color == opponent:
             return -10_000_000.0

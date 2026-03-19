@@ -321,7 +321,7 @@ async def update(sid, data):
 
     await emit_board_update(sid, current_game, winner=result, elapsed=0, color=color, heatmap=heatmap)
 
-    if effective_mode != "multiplayer":
+    if effective_mode == "solo":
         if result != 0:
             return
 
@@ -357,16 +357,13 @@ async def update(sid, data):
     update_scores(current_game)
 
     if show_hints:
-        hint_move = get_best_move_from_heatmap(heatmap) if heatmap is not None else None
         color_to_compute = Status.Player2 if color == Status.Player1 else Status.Player1
-        if hint_move is None:
-            last_hint_move = tuple(current_game["last_play"])
-            hint_move = await compute_best_move(
-                current_game,
-                color=color_to_compute if effective_mode == "multiplayer" else color,
-                last_move=last_hint_move,
-                depth=2
-            )
+        hint_move = await compute_best_move(
+            current_game,
+            player=color_to_compute if effective_mode == "multiplayer" else color,
+            last_move=(row, col),
+            depth=4
+        )
         hint_board = build_hint_board(current_game, hint_move)
         await emit_board_update(
             sid,
