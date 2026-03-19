@@ -1,8 +1,0 @@
-
-BOARD_SIZE = 19
-WIN_LENGTH = 5
-
-# Status enum
-EMPTY = 0
-PLAYER1 = 1
-PLAYER2 = 2

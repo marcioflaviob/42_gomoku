@@ -1,8 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BOARD_SIZE, GameMode, MoveStatus, Status, type Board } from '../utils/constants';
 import { io, Socket } from 'socket.io-client';
 import { useLocation } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
+
+type Heatmap = (number | null)[][];
+
+const createEmptyHeatmap = (): Heatmap =>
+  Array.from({ length: BOARD_SIZE }, () => Array.from({ length: BOARD_SIZE }, () => null));
+
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
 const BoardPage: React.FC = () => {
     const location = useLocation();
@@ -19,6 +26,7 @@ const BoardPage: React.FC = () => {
     const [status, setStatus] = useState<MoveStatus>(MoveStatus.Success);
     const [canUndo, setCanUndo] = useState<boolean>(false);
     const [canRedo, setCanRedo] = useState<boolean>(false);
+    const [heatmap, setHeatmap] = useState<Heatmap>(createEmptyHeatmap);
     const [board, setBoard] = useState<Status[][]>(Array.from({ length: BOARD_SIZE }, () =>
       Array.from({ length: BOARD_SIZE }, () => Status.Empty)
     ));
@@ -40,13 +48,54 @@ const BoardPage: React.FC = () => {
     const [showHints, setShowHints] = useState<boolean>(false);
     const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
 
+    const heatValues = useMemo(
+      () => heatmap.flat().filter((value): value is number => value !== null),
+      [heatmap]
+    );
+
+    const heatMin = heatValues.length > 0 ? Math.min(...heatValues) : 0;
+    const heatMax = heatValues.length > 0 ? Math.max(...heatValues) : 1;
+    const heatRange = Math.max(heatMax - heatMin, 1e-9);
+
+    const normalizeHeatScore = (score: number): number => {
+      // Handle all payload formats robustly:
+      // - already normalized [0, 1]
+      // - percent [0, 100]
+      // - raw minimax values (dynamic min-max)
+      if (heatMin >= 0 && heatMax <= 1.000001) {
+        return clamp01(score);
+      }
+      if (heatMin >= 0 && heatMax <= 100.000001) {
+        return clamp01(score / 100);
+      }
+      return clamp01((score - heatMin) / heatRange);
+    };
+
+    const formatHeatScore = (score: number): string => {
+      const percent = normalizeHeatScore(score) * 100;
+      return `${Math.round(percent)}`;
+    };
+
+    const getHeatmapCellStyle = (score: number): React.CSSProperties => {
+      const normalized = normalizeHeatScore(score);
+      const alpha = 0.2 + normalized * 0.55;
+      const hue = 28 + normalized * 102;
+      const saturation = theme === 'dark' ? 85 : 80;
+      const lightness = theme === 'dark' ? 42 : 46;
+
+      return {
+        backgroundColor: `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`,
+        color: theme === 'dark' ? '#f8fafc' : '#1f2937',
+      };
+    };
+
     // Column indicators: 0-18 for 19 columns
     const colIndicators = Array.from({ length: BOARD_SIZE }, (_, i) => i.toString());
 
     const handlePiecePlacement = (row: number, col: number, piece: Status) => {
       if (piece !== Status.Empty && piece !== Status.Suggested) return;
       if (loading || winner) return;
-      socketRef.current?.emit('update', { move: "placePiece", row, col, color: currentPlayer });
+      socketRef.current?.emit('update', { move: "placePiece", row, col, color: currentPlayer, showHints });
       if (mode === GameMode.Multiplayer) setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
       setLoading(true);
     };
@@ -80,7 +129,7 @@ const BoardPage: React.FC = () => {
           if (theme === 'dark') return 'bg-blue-500 border border-gray-400';
           return 'bg-black';
         case Status.Suggested:
-          return 'hover:opacity-50 bg-green-500 cursor-pointer';
+          return 'hover:opacity-80 opacity-50 bg-green-800 cursor-pointer';
         default:
           return '';
       }
@@ -90,10 +139,16 @@ const BoardPage: React.FC = () => {
       socketRef.current = io(import.meta.env.VITE_API_URL);
 
       socketRef.current.on('boardUpdate', (data: Board) => {
+        console.log('Received board update:', data);
         if (winner !== 0) return; // Ignore updates if game is already won
         if (data.color === 2) setLoading(false);
         if (data.board) setBoard(data.board);
-        if (data.status) setStatus(data.status);
+        if (data.heatmap) {
+          setHeatmap(data.heatmap);
+        } else if (data.status !== MoveStatus.Hint) {
+          setHeatmap(createEmptyHeatmap());
+        }
+        if (data.status !== MoveStatus.Hint) setStatus(data.status);
         if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
         if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
         if (data.aiResponseTime !== undefined) setAiResponseTime(data.aiResponseTime);
@@ -140,7 +195,7 @@ const BoardPage: React.FC = () => {
             className="px-3 py-1 rounded text-white font-semibold disabled:opacity-40 bg-emerald-600 hover:bg-emerald-700 transition-colors"
           >Play Again</button>
         )}
-        {/* Switch buttons for hints and heatmap */}
+        {/* Switches for hints and heatmap */}
         <div className="flex items-center gap-2 ml-6">
           <label className="flex items-center cursor-pointer">
             <input
@@ -175,7 +230,7 @@ const BoardPage: React.FC = () => {
         </div>
         <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
           <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>AI Response Time</h3>
-          <p className="text-2xl font-bold text-blue-600">{aiResponseTime.toFixed(5)}ms</p>
+          <p className="text-2xl font-bold text-blue-600">{aiResponseTime.toFixed(3)}s</p>
         </div>
       </div>
 
@@ -261,6 +316,31 @@ const BoardPage: React.FC = () => {
             ))
           )}
         </svg>
+
+        {showHeatmap && rows.map((row) =>
+          cols.map((col) => {
+            const score = heatmap[row]?.[col];
+            if (score === null || score === undefined) return null;
+
+            const piece = board[row][col];
+            if (piece !== Status.Empty && piece !== Status.Suggested) return null;
+
+            return (
+              <div
+                key={`heat-${row}-${col}`}
+                className="absolute -translate-x-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[10px] font-semibold pointer-events-none select-none"
+                style={{
+                  left: `${20 + col * cellSize}px`,
+                  top: `${20 + row * cellSize}px`,
+                  ...getHeatmapCellStyle(score),
+                }}
+                aria-hidden="true"
+              >
+                {formatHeatScore(score)}
+              </div>
+            );
+          })
+        )}
 
         {rows.map((row) =>
           cols.map((col) => {

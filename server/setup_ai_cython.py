@@ -4,11 +4,9 @@ import numpy as np
 
 
 extensions = [
-    Extension("ai_cython.constants", ["ai_cython/constants.pyx"]),
-    Extension("ai_cython.heuristics", ["ai_cython/heuristics.pyx"], include_dirs=[np.get_include()]),
-    Extension("ai_cython.moves", ["ai_cython/moves.pyx"], include_dirs=[np.get_include()]),
-    Extension("ai_cython.optimizer", ["ai_cython/optimizer.pyx"], include_dirs=[np.get_include()]),
-    Extension("ai_cython.minimax", ["ai_cython/minimax.pyx"], include_dirs=[np.get_include()]),
+    Extension("ai.heuristics", ["ai/heuristics.pyx"], include_dirs=[np.get_include()]),
+    Extension("ai.moves", ["ai/moves.pyx"], include_dirs=[np.get_include()]),
+    Extension("ai.minimax", ["ai/minimax.pyx"], include_dirs=[np.get_include()]),
 ]
 
 setup(
