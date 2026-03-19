@@ -241,40 +241,38 @@ cdef inline void update_candidates(int[:, :] candidate_board,
 
 
 # ===========================================================================
-# Minimax with alpha-beta, Zobrist transposition table,
+# Negascout (Principal Variation Search) with Zobrist transposition table
 # and INCREMENTAL board evaluation
+#
+# Convention: board_score is ALWAYS from current_player's perspective.
+# The caller negates it before passing down, so every node maximizes.
+#
+# board_score tracks the exact full-board evaluation for the current position —
+# accumulated via deltas from the root.  Leaf nodes return O(1).
 # ===========================================================================
-# board_score tracks the exact full-board evaluation for the current position.
-# Computing it incrementally (re-score only the 4 lines through the last move)
-# reduces leaf-node work from ~400 window evals to ~56 and makes depth-0
-# returns O(1) instead of O(N²).
 
-cpdef double minimax(
+cpdef double negascout(
     cnp.int64_t[:, :] board,
     int depth,
     double alpha,
     double beta,
-    bint is_maximizing,
-    int player,
+    int current_player,          # the player whose turn it is at this node
+    int root_player,             # the player we are optimizing for (fixed)
     int player1_captures,
     int player2_captures,
     int[:, :] candidate_board,
     tuple last_move,
     unsigned long long current_hash,
-    double board_score,          # incremental full-board evaluation
+    double board_score,          # incremental eval from current_player's POV
 ):
     global compteur_heuristique
 
     cdef double original_alpha = alpha
-    cdef double original_beta  = beta
-    cdef int opponent = 3 - player
-    cdef int current_player = player if is_maximizing else opponent
+    cdef int opponent = 3 - current_player
+    cdef bint player_is_root = (current_player == root_player)
 
-    # Typed memoryview: direct C pointer arithmetic for board reads/writes,
-    # no Python __getitem__/__setitem__ overhead.
-
-    # Transposition-table lookup
-    cdef tuple tt_key = (current_hash, player1_captures, player2_captures, is_maximizing)
+    # ── Transposition-table lookup ─────────────────────────────────────────
+    cdef tuple tt_key = (current_hash, player1_captures, player2_captures, current_player)
     if tt_key in transposition_table:
         stored_depth, stored_score, stored_flag = transposition_table[tt_key]
         if stored_depth >= depth:
@@ -285,194 +283,149 @@ cpdef double minimax(
             elif stored_flag == FLAG_BETA and stored_score >= beta:
                 return stored_score
 
-    # Win detection (checks last placed stone only)
+    # ── Win detection ──────────────────────────────────────────────────────
     cdef int lm_r = last_move[0]
     cdef int lm_c = last_move[1]
-    if check_win(board, last_move[0], last_move[1], "me",
-                 [player1_captures, player2_captures]):
+    if check_win(board, lm_r, lm_c, "me", [player1_captures, player2_captures]):
         compteur_heuristique += 1
         winner_color = board[lm_r, lm_c]
-        if winner_color == player:
+        # Score from current_player's POV: win → +big, loss → -big
+        if winner_color == current_player:
             return 10_000_000.0
         elif winner_color == opponent:
             return -10_000_000.0
-        elif winner_color == 3 and current_player == player:
+        elif winner_color == 3 and player_is_root:
             return 450_000.0
-        elif winner_color == 3 and current_player == opponent:
+        elif winner_color == 3 and not player_is_root:
             return -450_000.0
-        # Capture-win ambiguity: return the already-correct incremental score
         return board_score
 
     # ── Leaf node ──────────────────────────────────────────────────────────
-    # board_score is the exact full-board evaluation for this position —
-    # accumulated via deltas from the root.  No board scan needed. O(1).
+    # board_score is already from current_player's POV (negated at each level).
     if depth == 0:
         compteur_heuristique += 1
         return board_score
 
     # ── Candidate moves ────────────────────────────────────────────────────
-    cdef bint player_is_1   = (player == 1)
+    cdef int dynamic_max
+    if depth >= 8:
+        dynamic_max = 10
+    elif depth >= 3:
+        dynamic_max = 5
+    else:
+        dynamic_max = 3
 
-    # Local variable declarations (must be at function scope in Cython)
-    cdef double max_score, min_score, score, delta_score
+    candidates = sort_candidates(board, candidate_board, current_player, dynamic_max)
+    if not candidates:
+        return board_score
+
+    # ── Local variable declarations ────────────────────────────────────────
+    cdef double score, delta_score, null_alpha
     cdef int p1_cap, p2_cap, captured, r, c, m_r, m_c
     cdef tuple move
     cdef list captured_positions
     cdef unsigned long long next_hash
     cdef int flag
+    cdef bint first_move = True
 
     # Incremental delta variables
     cdef int pre_pl, pre_op, pre_cap_pot, pre_cap_sc
     cdef int post_pl, post_op, post_cap_pot, post_cap_sc
+    cdef bint current_is_1 = (current_player == 1)
 
-    cdef int dynamic_max
-    if depth >= 8:
-        dynamic_max = 10  # On explore large en haut de l'arbre
-    elif depth >= 3:
-        dynamic_max = 5  # On se concentre sur les bonnes pistes au milieu
-    else:
-        dynamic_max = 3
-    candidates = sort_candidates(board, candidate_board, player, dynamic_max)
-    if not candidates:
-        return board_score
+    for move in candidates:
+        m_r = move[0]; m_c = move[1]
 
-    if is_maximizing:
-        max_score = -INF
-        for move in candidates:
-            m_r = move[0]; m_c = move[1]
+        # ── Incremental eval: BEFORE ───────────────────────────────────────
+        pre_pl      = _mm_score_4_lines(board, current_player, m_r, m_c)
+        pre_op      = _mm_score_4_lines(board, opponent,       m_r, m_c)
+        pre_cap_pot = _mm_capture_score_4_lines(board, current_player, m_r, m_c)
+        if current_is_1:
+            pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
+        else:
+            pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
 
-            # ── Incremental eval: capture board state BEFORE this move ──
-            pre_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
-            pre_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
-            pre_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
-            if player_is_1:
-                pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
-            else:
-                pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
+        # ── DO ────────────────────────────────────────────────────────────
+        board[m_r, m_c] = current_player
+        next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
+        update_candidates(candidate_board, m_r, m_c, 1)
 
-            # ── DO ──────────────────────────────────────────────────────
-            board[m_r, m_c] = current_player
-            next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
-            update_candidates(candidate_board, m_r, m_c, 1)
+        p1_cap = player1_captures
+        p2_cap = player2_captures
+        captured_positions = apply_capture(board, move, current_player)
+        for cap_r, cap_c in captured_positions:
+            next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][opponent - 1]
+            update_candidates(candidate_board, cap_r, cap_c, -1)
+        captured = len(captured_positions)
+        if current_player == 1: p1_cap += captured
+        else:                   p2_cap += captured
 
-            p1_cap = player1_captures
-            p2_cap = player2_captures
-            captured_positions = apply_capture(board, move, current_player)
-            for cap_r, cap_c in captured_positions:
-                next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][opponent - 1]
-                update_candidates(candidate_board, cap_r, cap_c, -1)
-            captured = len(captured_positions)
-            if current_player == 1: p1_cap += captured
-            else:                   p2_cap += captured
+        # ── Incremental eval: AFTER ────────────────────────────────────────
+        post_pl      = _mm_score_4_lines(board, current_player, m_r, m_c)
+        post_op      = _mm_score_4_lines(board, opponent,       m_r, m_c)
+        post_cap_pot = _mm_capture_score_4_lines(board, current_player, m_r, m_c)
+        if current_is_1:
+            post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
+        else:
+            post_cap_sc = _mm_score_captures(p2_cap, p1_cap)
 
-            # ── Incremental eval: capture board state AFTER this move ───
-            post_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
-            post_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
-            post_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
-            if player_is_1:
-                post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
-            else:
-                post_cap_sc = _mm_score_captures(p2_cap, p1_cap)
+        delta_score = <double>(
+            (post_pl - post_op + post_cap_pot + post_cap_sc) -
+            (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
+        )
 
-            delta_score = <double>(
-                (post_pl - post_op + post_cap_pot + post_cap_sc) -
-                (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
-            )
+        # ── NEGASCOUT SEARCH ───────────────────────────────────────────────
+        # Child's board_score is from the opponent's POV:
+        #   negate (board_score + delta) since the roles flip.
+        # Window also flips and negates: (-beta, -alpha).
 
-            # ── RECURSE ─────────────────────────────────────────────────
-            score = minimax(
-                board, depth - 1, alpha, beta, False, player,
+        if first_move:
+            # PV move: full-window search
+            score = -negascout(
+                board, depth - 1, -beta, -alpha,
+                opponent, root_player,
                 p1_cap, p2_cap, candidate_board, move, next_hash,
-                board_score + delta_score,
+                -(board_score + delta_score),
             )
-
-            max_score = max(max_score, score)
-            alpha     = max(alpha, score)
-
-            # ── UNDO ────────────────────────────────────────────────────
-            board[m_r, m_c] = 0
-            update_candidates(candidate_board, m_r, m_c, -1)
-            for r, c in captured_positions:
-                board[r, c] = opponent
-                update_candidates(candidate_board, r, c, 1)
-
-            if beta <= alpha:
-                break
-
-        if max_score <= original_alpha: flag = FLAG_ALPHA
-        elif max_score >= beta:         flag = FLAG_BETA
-        else:                           flag = FLAG_EXACT
-        transposition_table[tt_key] = (depth, max_score, flag)
-        return max_score
-
-    else:
-        min_score = INF
-        for move in candidates:
-            m_r = move[0]; m_c = move[1]
-
-            # ── Incremental eval: BEFORE ──
-            pre_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
-            pre_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
-            pre_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
-            if player_is_1:
-                pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
-            else:
-                pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
-
-            # ── DO ──────────────────────────────────────────────────────
-            board[m_r, m_c] = current_player
-            next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
-            update_candidates(candidate_board, m_r, m_c, 1)
-
-            p1_cap = player1_captures
-            p2_cap = player2_captures
-            captured_positions = apply_capture(board, move, current_player)
-            for cap_r, cap_c in captured_positions:
-                next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][player - 1]
-                update_candidates(candidate_board, cap_r, cap_c, -1)
-            captured = len(captured_positions)
-            if current_player == 1: p1_cap += captured
-            else:                   p2_cap += captured
-
-            # ── Incremental eval: AFTER ──
-            post_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
-            post_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
-            post_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
-            if player_is_1:
-                post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
-            else:
-                post_cap_sc = _mm_score_captures(p2_cap, p1_cap)
-
-            delta_score = <double>(
-                (post_pl - post_op + post_cap_pot + post_cap_sc) -
-                (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
-            )
-
-            # ── RECURSE ─────────────────────────────────────────────────
-            score = minimax(
-                board, depth - 1, alpha, beta, True, player,
+            first_move = False
+        else:
+            # Null-window scout: prove this move is ≤ alpha
+            score = -negascout(
+                board, depth - 1, -alpha - 1.0, -alpha,
+                opponent, root_player,
                 p1_cap, p2_cap, candidate_board, move, next_hash,
-                board_score + delta_score,
+                -(board_score + delta_score),
             )
 
-            min_score = min(min_score, score)
-            beta      = min(beta, score)
+            # Scout failed high → move ordering was wrong, re-search with full window
+            if alpha < score < beta:
+                score = -negascout(
+                    board, depth - 1, -beta, -score,
+                    opponent, root_player,
+                    p1_cap, p2_cap, candidate_board, move, next_hash,
+                    -(board_score + delta_score),
+                )
 
-            # ── UNDO ────────────────────────────────────────────────────
-            board[m_r, m_c] = 0
-            update_candidates(candidate_board, m_r, m_c, -1)
-            for r, c in captured_positions:
-                board[r, c] = player
-                update_candidates(candidate_board, r, c, 1)
+        # ── UNDO ──────────────────────────────────────────────────────────
+        board[m_r, m_c] = 0
+        update_candidates(candidate_board, m_r, m_c, -1)
+        for r, c in captured_positions:
+            board[r, c] = opponent
+            update_candidates(candidate_board, r, c, 1)
 
-            if beta <= alpha:
-                break
+        # ── Alpha update & cutoff ──────────────────────────────────────────
+        if score > alpha:
+            alpha = score
+        if alpha >= beta:
+            break  # Beta cutoff
 
-        if min_score >= original_beta:  flag = FLAG_BETA
-        elif min_score <= alpha:        flag = FLAG_ALPHA
-        else:                           flag = FLAG_EXACT
-        transposition_table[tt_key] = (depth, min_score, flag)
-        return min_score
+    # ── Transposition table store ──────────────────────────────────────────
+    if alpha <= original_alpha: flag = FLAG_ALPHA
+    elif alpha >= beta:         flag = FLAG_BETA
+    else:                       flag = FLAG_EXACT
+    transposition_table[tt_key] = (depth, alpha, flag)
+
+    return alpha
 
 
 # ===========================================================================
@@ -581,10 +534,13 @@ cpdef tuple get_best_move(
             (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
         )
 
-        score = minimax(
-            board_mv, depth - 1, alpha, beta, False, player,
+        # Root calls negascout as the opponent's turn (we just placed player's stone).
+        # board_score for the child is from opponent's POV → negate.
+        score = -negascout(
+            board_mv, depth - 1, -beta, -alpha,
+            opponent, player,
             p1_cap, p2_cap, candidate_board, move, next_hash,
-            initial_board_score + delta_score,
+            -(initial_board_score + delta_score),
         )
 
         if score > best_score:
@@ -707,10 +663,11 @@ cpdef dict get_heatmap_scores(
             (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
         )
 
-        score = minimax(
-            board, depth - 1, -INF, INF, False, player,
+        score = -negascout(
+            board, depth - 1, -INF, INF,
+            opponent, player,
             p1_cap, p2_cap, candidate_board, move, next_hash,
-            initial_board_score + delta_score,
+            -(initial_board_score + delta_score),
         )
         move_scores[(m_r, m_c)] = score
 
@@ -729,7 +686,7 @@ cpdef dict get_heatmap_scores(
 # ===========================================================================
 
 cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
-                            int player, int max_count=10):
+                            int player, int max_count=20):
     cdef int center   = 9
     cdef int opponent = 3 - player
 
