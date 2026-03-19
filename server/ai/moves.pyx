@@ -8,6 +8,18 @@ cnp.import_array()
 DEF BOARD_SIZE = 19
 DEF EMPTY      = 0
 
+
+# ===========================================================================
+# apply_capture
+# ===========================================================================
+# Places a stone at (row, col) for player, removes captured pairs on all 8
+# ray directions, and returns the list of captured positions so the caller
+# can undo the move.
+#
+# Returns a Python list of (r, c) tuples — needed by the minimax undo loop.
+# The board read/write path uses a typed memoryview for direct C access.
+# ===========================================================================
+
 cpdef list apply_capture(cnp.ndarray board, tuple move, int player):
     cdef cnp.int64_t[:, :] bv = board
     cdef int row      = move[0]
@@ -47,6 +59,20 @@ cpdef list apply_capture(cnp.ndarray board, tuple move, int player):
             captured.append((r2, c2))
 
     return captured
+
+
+# ===========================================================================
+# check_win
+# ===========================================================================
+# Returns the winning player number (1 or 2) if the position at (row, col)
+# is part of a winning condition, 0 otherwise.
+#
+# Win conditions:
+#   • The player who owns (row, col) has >= 10 captured opponent stones.
+#   • A line of >= 5 consecutive stones through (row, col) that is not
+#     itself vulnerable to immediate capture (unless winner == "oppo",
+#     in which case the capture-safety check is skipped).
+# ===========================================================================
 
 cpdef int check_win(cnp.ndarray board, int row, int col,
                     str winner, list captures):
@@ -103,9 +129,60 @@ cpdef int check_win(cnp.ndarray board, int row, int col,
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Internal helper: returns True if any stone in the win line can be captured
-# ---------------------------------------------------------------------------
+cpdef int check_double_three(cnp.ndarray board, int row, int col, int color):
+    if color == 0:
+        return 0
+
+    cdef cnp.int64_t[:, :] bv = board
+    cdef int opponent = 3 - color
+
+    cdef int DRS[4]
+    cdef int DCS[4]
+    DRS[0] = 0; DCS[0] = 1
+    DRS[1] = 1; DCS[1] = 0
+    DRS[2] = 1; DCS[2] = 1
+    DRS[3] = 1; DCS[3] = -1
+
+    cdef int free_three_count = 0
+    cdef int d, i, j, dr, dc, r, c, v
+    cdef int buf[9]
+    cdef int wpc, wec
+    cdef bint has_opponent, found, left_open, right_open
+
+    for d in range(4):
+        dr = DRS[d]; dc = DCS[d]
+
+        for i in range(-4, 5):
+            r = row + dr * i
+            c = col + dc * i
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                buf[i + 4] = color if i == 0 else <int>bv[r, c]
+            else:
+                buf[i + 4] = opponent
+
+        found = False
+        for i in range(4):
+            wpc = 0; wec = 0; has_opponent = False
+            for j in range(6):
+                v = buf[i + j]
+                if v == color:       wpc += 1
+                elif v == EMPTY:     wec += 1
+                else:                has_opponent = True
+
+            if has_opponent or wpc != 3 or wec != 3:
+                continue
+
+            left_open  = (i == 0)     or (buf[i - 1] == EMPTY)
+            right_open = (i + 6 >= 9) or (buf[i + 6] == EMPTY)
+
+            if left_open and right_open:
+                found = True
+                break
+
+        if found:
+            free_three_count += 1
+
+    return 1 if free_three_count >= 2 else 0
 
 cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
                                 int* win_r, int* win_c, int wlen,
