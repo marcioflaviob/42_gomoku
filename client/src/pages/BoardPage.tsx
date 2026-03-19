@@ -95,13 +95,15 @@ const BoardPage: React.FC = () => {
     const handlePiecePlacement = (row: number, col: number, piece: Status) => {
       if (piece !== Status.Empty && piece !== Status.Suggested) return;
       if (loading || winner) return;
-      socketRef.current?.emit('update', { move: "placePiece", row, col, color: currentPlayer, showHints });
+      setAiResponseTime(0);
+      socketRef.current?.emit('update', { move: "placePiece", row, col, color: currentPlayer, showHints, mode });
       if (mode === GameMode.Multiplayer) setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
       setLoading(true);
     };
 
     const handleUndo = () => {
       if (!canUndo || loading) return;
+      if (mode === GameMode.Multiplayer) setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
       socketRef.current?.emit('update', { move: 'undo' });
       setLoading(true);
     };
@@ -141,13 +143,14 @@ const BoardPage: React.FC = () => {
       socketRef.current.on('boardUpdate', (data: Board) => {
         console.log('Received board update:', data);
         if (winner !== 0) return; // Ignore updates if game is already won
-        if (data.color === 2) setLoading(false);
+        if ((data.color === 2) || (mode === "multiplayer")) setLoading(false);
         if (data.board) setBoard(data.board);
         if (data.heatmap) {
           setHeatmap(data.heatmap);
         } else if (data.status !== MoveStatus.Hint) {
           setHeatmap(createEmptyHeatmap());
         }
+        if (data.status === MoveStatus.Forbidden) setLoading(false);
         if (data.status !== MoveStatus.Hint) setStatus(data.status);
         if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
         if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
@@ -230,7 +233,7 @@ const BoardPage: React.FC = () => {
         </div>
         <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
           <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>AI Response Time</h3>
-          <p className="text-2xl font-bold text-blue-600">{aiResponseTime.toFixed(3)}s</p>
+          <p className="text-2xl font-bold text-blue-600">{aiResponseTime === 0 ? ' - ' : `${aiResponseTime.toFixed(3)}s`}</p>
         </div>
       </div>
 

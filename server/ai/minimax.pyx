@@ -718,7 +718,7 @@ cpdef dict get_heatmap_scores(
 # ===========================================================================
 
 cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
-                            int player, int max_count=15):
+                            int player, int max_count=10):
     cdef int center   = 9
     cdef int opponent = 3 - player
 

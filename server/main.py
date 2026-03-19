@@ -30,6 +30,7 @@ def create_new_game_state():
         "captured_white_black": [0, 0],
         "history": [],
         "future": [],
+        "mode": "multiplayer",
     }
 
 
@@ -175,21 +176,29 @@ def get_best_move_from_heatmap(heatmap):
     return best_move
 
 
-async def handle_meta_move(sid, move, current_game):
+async def handle_meta_move(sid, move, current_game, mode):
     if move == "undo":
-        undo(current_game)
+        steps = 2 if mode != "multiplayer" else 1
+        while steps > 0 and len(current_game["history"]) > 0:
+            undo(current_game)
+            steps -= 1
         heatmap = await compute_player_heatmap_async(current_game, player=Status.Player1)
         await emit_board_update(sid, current_game, heatmap=heatmap)
         return True
 
     if move == "redo":
-        redo(current_game)
+        steps = 2 if mode != "multiplayer" else 1
+        while steps > 0 and len(current_game["future"]) > 0:
+            redo(current_game)
+            steps -= 1
         heatmap = await compute_player_heatmap_async(current_game, player=Status.Player1)
         await emit_board_update(sid, current_game, heatmap=heatmap)
         return True
 
     if move == "reset":
+        reset_mode = current_game.get("mode", "multiplayer")
         games[sid] = create_new_game_state()
+        games[sid]["mode"] = reset_mode
         heatmap = await compute_player_heatmap_async(games[sid], player=Status.Player1)
         await emit_board_update(sid, games[sid], heatmap=heatmap)
         return True
@@ -205,9 +214,13 @@ async def update(sid, data):
         return
 
     move = data.get("move")
+    mode = data.get("mode")
+    if mode in ("multiplayer", "solo"):
+        current_game["mode"] = mode
+    effective_mode = current_game.get("mode", "multiplayer")
     show_hints = bool(data.get("showHints", False))
 
-    if await handle_meta_move(sid, move, current_game):
+    if await handle_meta_move(sid, move, current_game, effective_mode):
         return
 
     # Default: placePiece
@@ -223,43 +236,52 @@ async def update(sid, data):
     if result == -1:
         await emit_forbidden(sid)
         return
-
-    await emit_board_update(sid, current_game, winner=result, elapsed=0, color=color)
-
-    # If the player has already won, there is no hint or AI move to compute.
-    if result != 0:
-        return
-
-    await sio.sleep(0)
-
-
-    start_time = time.perf_counter()
-    best_move = await compute_best_move(current_game, Status.Player2, (row, col), depth=10)
-    end_time = time.perf_counter()
-    elapsed_time = end_time - start_time
-
-    result = play(current_game, best_move[0], best_move[1], Status.Player2)
-    if result == -1:
-        await emit_forbidden(sid)
-        return
-
+    
     heatmap = None
     if result == 0:
-        heatmap = await compute_player_heatmap_async(current_game, player=Status.Player1)
+        heatmap = await compute_player_heatmap_async(current_game, player=Status.Player2 if color == Status.Player1 else Status.Player1)
 
-    await emit_board_update(
-        sid,
-        current_game,
-        winner=result,
-        elapsed=elapsed_time,
-        color=Status.Player2,
-        heatmap=heatmap,
-    )
+    await emit_board_update(sid, current_game, winner=result, elapsed=0, color=color, heatmap=heatmap)
+
+    if effective_mode != "multiplayer":
+        if result != 0:
+            return
+
+        await sio.sleep(0)
+
+
+        start_time = time.perf_counter()
+        best_move = await compute_best_move(current_game, Status.Player2, (row, col), depth=8)
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
+
+        result = play(current_game, best_move[0], best_move[1], Status.Player2)
+        if result == -1:
+            await emit_forbidden(sid)
+            return
+    
+        if result == 0:
+            heatmap = await compute_player_heatmap_async(current_game, player=color)
+
+        await emit_board_update(
+            sid,
+            current_game,
+            winner=result,
+            elapsed=elapsed_time,
+            color=Status.Player2,
+            heatmap=heatmap,
+        )
 
     if show_hints:
         hint_move = get_best_move_from_heatmap(heatmap) if heatmap is not None else None
+        color_to_compute = Status.Player2 if color == Status.Player1 else Status.Player1
         if hint_move is None:
-            hint_move = await compute_best_move(current_game, Status.Player1, (best_move[0], best_move[1]), depth=2)
+            hint_move = await compute_best_move(
+                current_game,
+                color=color_to_compute if effective_mode == "multiplayer" else color,
+                last_move=(best_move[0], best_move[1]),
+                depth=2
+            )
         hint_board = build_hint_board(current_game, hint_move)
         await emit_board_update(
             sid,
