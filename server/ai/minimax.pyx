@@ -291,7 +291,7 @@ cpdef double minimax(
     if check_win(board, last_move[0], last_move[1], "me",
                  [player1_captures, player2_captures]):
         compteur_heuristique += 1
-        winner_color = <int>board_mv[lm_r, lm_c]
+        winner_color = board[lm_r, lm_c]
         if winner_color == player:
             return 10_000_000.0
         elif winner_color == opponent:
@@ -611,7 +611,7 @@ cpdef tuple get_best_move(
 
 
 cpdef dict get_heatmap_scores(
-    cnp.ndarray board,
+    cnp.int64_t[:, :] board,
     int player,
     int player1_captures,
     int player2_captures,
@@ -626,8 +626,7 @@ cpdef dict get_heatmap_scores(
     init_zobrist()
     transposition_table.clear()
 
-    cdef cnp.int64_t[:, :] board_mv = board
-    cdef unsigned long long current_hash = compute_initial_hash(board_mv)
+    cdef unsigned long long current_hash = compute_initial_hash(board)
     cdef int opponent = 3 - player
     cdef bint player_is_1 = (player == 1)
 
@@ -649,7 +648,7 @@ cpdef dict get_heatmap_scores(
 
     for r in range(19):
         for c in range(19):
-            if board_mv[r, c] != 0:
+            if board[r, c] != 0:
                 is_empty_board = False
                 update_candidates(candidate_board, r, c, 1)
 
@@ -660,7 +659,7 @@ cpdef dict get_heatmap_scores(
     cdef int p_caps_init = player1_captures if player_is_1 else player2_captures
     cdef int o_caps_init = player2_captures if player_is_1 else player1_captures
     cdef double initial_board_score = evaluate_board_full_mv(
-        board_mv, player, p_caps_init, o_caps_init
+        board, player, p_caps_init, o_caps_init
     )
 
     cdef list sorted_candidates = sort_candidates(board, candidate_board, player, max_candidates)
@@ -669,16 +668,16 @@ cpdef dict get_heatmap_scores(
         m_r = move[0]; m_c = move[1]
 
         # BEFORE move
-        pre_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
-        pre_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
-        pre_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+        pre_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
+        pre_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
+        pre_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
         if player_is_1:
             pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
         else:
             pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
 
         # DO
-        board_mv[m_r, m_c] = player
+        board[m_r, m_c] = player
         next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][player - 1]
         update_candidates(candidate_board, m_r, m_c, 1)
 
@@ -695,9 +694,9 @@ cpdef dict get_heatmap_scores(
             p2_cap += captured
 
         # AFTER move
-        post_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
-        post_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
-        post_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+        post_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
+        post_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
+        post_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
         if player_is_1:
             post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
         else:
@@ -717,9 +716,9 @@ cpdef dict get_heatmap_scores(
 
         # UNDO
         for r, c in captured_positions:
-            board_mv[r, c] = opponent
+            board[r, c] = opponent
             update_candidates(candidate_board, r, c, 1)
-        board_mv[m_r, m_c] = 0
+        board[m_r, m_c] = 0
         update_candidates(candidate_board, m_r, m_c, -1)
 
     return move_scores

@@ -101,11 +101,10 @@ cpdef int check_win(cnp.int64_t[:, :] board, int row, int col, str winner, list 
     return 0
 
 
-cpdef int check_double_three(cnp.ndarray board, int row, int col, int color):
+cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int color):
     if color == 0:
         return 0
 
-    cdef cnp.int64_t[:, :] bv = board
     cdef int opponent = 3 - color
 
     cdef int DRS[4]
@@ -128,7 +127,7 @@ cpdef int check_double_three(cnp.ndarray board, int row, int col, int color):
             r = row + dr * i
             c = col + dc * i
             if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
-                buf[i + 4] = color if i == 0 else <int>bv[r, c]
+                buf[i + 4] = color if i == 0 else <int>board[r, c]
             else:
                 buf[i + 4] = opponent
 

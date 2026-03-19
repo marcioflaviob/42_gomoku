@@ -260,6 +260,9 @@ async def update(sid, data):
         if result == -1:
             await emit_forbidden(sid)
             return
+        
+        if result == 3:
+            result = 0
     
         if result == 0:
             heatmap = await compute_player_heatmap_async(current_game, player=color)
