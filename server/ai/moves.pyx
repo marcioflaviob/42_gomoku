@@ -1,5 +1,7 @@
-from ai.constants import BOARD_SIZE, EMPTY
 import numpy as np
+
+BOARD_SIZE = 19
+EMPTY = 0
 
 def get_possible_captures(board: np.ndarray, player: int) -> list[tuple[int, int]]:
     """

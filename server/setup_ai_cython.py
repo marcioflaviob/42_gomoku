@@ -4,10 +4,8 @@ import numpy as np
 
 
 extensions = [
-    Extension("ai.constants", ["ai/constants.pyx"]),
     Extension("ai.heuristics", ["ai/heuristics.pyx"], include_dirs=[np.get_include()]),
     Extension("ai.moves", ["ai/moves.pyx"], include_dirs=[np.get_include()]),
-    Extension("ai.optimizer", ["ai/optimizer.pyx"], include_dirs=[np.get_include()]),
     Extension("ai.minimax", ["ai/minimax.pyx"], include_dirs=[np.get_include()]),
 ]
 

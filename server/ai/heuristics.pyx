@@ -11,15 +11,6 @@ cnp.import_array()
 DEF EMPTY      = 0
 DEF BOARD_SIZE = 19
 
-# ── Python-level score constants (kept for external API callers) ──────────────
-SCORE_OPEN_FOUR    = 100_000
-SCORE_CLOSED_FOUR  = 10_000
-SCORE_OPEN_THREE   = 5_000
-SCORE_CLOSED_THREE = 500
-SCORE_OPEN_TWO     = 200
-SCORE_CLOSED_TWO   = 50
-SCORE_CAPTURE      = 3_000
-
 # ── C-level score constants ────────────────────────────────────────────────────
 # These are used in cdef/nogil hot paths.  Module-level cdef ints are plain C
 # globals — one load, no Python object overhead, no GIL required.
@@ -441,113 +432,72 @@ cpdef double evaluate_board_full_mv(cnp.int64_t[:, :] board, int player,
 # Candidate move generator
 # ===========================================================================
 
-def get_candidates(cnp.int64_t[:, :] board, int radius=2) -> list:
-    """
-    Return empty cells within `radius` steps of any occupied cell.
-    Uses a typed memoryview for fast cell reads (no Python __getitem__).
-    """
-    cdef int r, c, dr, dc, nr, nc
-    candidates = set()
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if board[r, c] != EMPTY:
-                for dr in range(-radius, radius + 1):
-                    for dc in range(-radius, radius + 1):
-                        nr = r + dr
-                        nc = c + dc
-                        if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE:
-                            if board[nr, nc] == EMPTY:
-                                candidates.add((nr, nc))
-    return list(candidates)
 
+# def score_window(window, int player) -> int:
+#     cdef int n = len(window)
+#     if n == 6:
+#         return _score_window6_values(
+#             <int>window[0], <int>window[1], <int>window[2],
+#             <int>window[3], <int>window[4], <int>window[5],
+#             player,
+#         )
+#     cdef int i, score = 0, opponent = 3 - player
+#     cdef int player_count = 0, opponent_count = 0, empty_count = 0, freedom_code
+#     for i in range(n):
+#         if window[i] == player:       player_count   += 1
+#         elif window[i] == opponent:   opponent_count += 1
+#         else:                         empty_count    += 1
+#     if player_count == 5:
+#         return 10_000_000
 
-def get_pattern_freedom(window, int pattern_start, int pattern_length,
-                         int player) -> str:
-    cdef int opponent    = 3 - player
-    cdef int pattern_end = pattern_start + pattern_length - 1
-    cdef bint left_blocked  = (pattern_start > 0 and
-                                window[pattern_start - 1] == opponent)
-    cdef bint right_blocked = (pattern_end < len(window) - 1 and
-                                window[pattern_end + 1] == opponent)
-    if left_blocked and right_blocked:
-        return 'flanked'
-    elif left_blocked or right_blocked:
-        return 'half_free'
-    else:
-        return 'free'
+#     if opponent_count > 0 and player_count < 4:
+#         return 0
+#     if opponent_count > 1:
+#         return 0
 
-
-def has_space_to_develop(window, int pattern_start, int pattern_length,
-                          int player) -> bool:
-    return get_pattern_freedom(window, pattern_start, pattern_length,
-                               player) != 'flanked'
-
-
-def score_window(window, int player) -> int:
-    cdef int n = len(window)
-    if n == 6:
-        return _score_window6_values(
-            <int>window[0], <int>window[1], <int>window[2],
-            <int>window[3], <int>window[4], <int>window[5],
-            player,
-        )
-    cdef int i, score = 0, opponent = 3 - player
-    cdef int player_count = 0, opponent_count = 0, empty_count = 0, freedom_code
-    for i in range(n):
-        if window[i] == player:       player_count   += 1
-        elif window[i] == opponent:   opponent_count += 1
-        else:                         empty_count    += 1
-    if player_count == 5:
-        return 10_000_000
-
-    if opponent_count > 0 and player_count < 4:
-        return 0
-    if opponent_count > 1:
-        return 0
-
-    if player_count == 4:
-        for i in range(n - 3):
-            if (window[i] == player and window[i+1] == player and
-                    window[i+2] == player and window[i+3] == player):
-                freedom_code = _freedom_code_from_values(
-                    opponent if i > 0 and window[i-1] == opponent else EMPTY,
-                    opponent if i+3 < n-1 and window[i+4] == opponent else EMPTY,
-                    opponent,
-                )
-                if freedom_code != 2:
-                    score += _scaled_score(
-                        C_CLOSE4 if empty_count == 1 else C_OPEN4,
-                        freedom_code,
-                    )
-                break
-    elif player_count == 3:
-        for i in range(n - 2):
-            if (window[i] == player and window[i+1] == player and
-                    window[i+2] == player):
-                freedom_code = _freedom_code_from_values(
-                    opponent if i > 0 and window[i-1] == opponent else EMPTY,
-                    opponent if i+2 < n-1 and window[i+3] == opponent else EMPTY,
-                    opponent,
-                )
-                if freedom_code != 2:
-                    if empty_count == 2:   score += _scaled_score(C_OPEN3, freedom_code)
-                    elif empty_count == 1: score += _scaled_score(C_CLOSE3, freedom_code)
-                break
-    elif player_count == 2:
-        for i in range(n - 1):
-            if window[i] == player and window[i+1] == player:
-                freedom_code = _freedom_code_from_values(
-                    opponent if i > 0 and window[i-1] == opponent else EMPTY,
-                    opponent if i+1 < n-1 and window[i+2] == opponent else EMPTY,
-                    opponent,
-                )
-                if freedom_code != 2:
-                    if empty_count == 3:   score += _scaled_score(C_OPEN2, freedom_code)
-                    elif empty_count == 2: score += _scaled_score(C_CLOSE2, freedom_code)
-                break
-    elif player_count == 1:
-        score += 10
-    return score
+#     if player_count == 4:
+#         for i in range(n - 3):
+#             if (window[i] == player and window[i+1] == player and
+#                     window[i+2] == player and window[i+3] == player):
+#                 freedom_code = _freedom_code_from_values(
+#                     opponent if i > 0 and window[i-1] == opponent else EMPTY,
+#                     opponent if i+3 < n-1 and window[i+4] == opponent else EMPTY,
+#                     opponent,
+#                 )
+#                 if freedom_code != 2:
+#                     score += _scaled_score(
+#                         C_CLOSE4 if empty_count == 1 else C_OPEN4,
+#                         freedom_code,
+#                     )
+#                 break
+#     elif player_count == 3:
+#         for i in range(n - 2):
+#             if (window[i] == player and window[i+1] == player and
+#                     window[i+2] == player):
+#                 freedom_code = _freedom_code_from_values(
+#                     opponent if i > 0 and window[i-1] == opponent else EMPTY,
+#                     opponent if i+2 < n-1 and window[i+3] == opponent else EMPTY,
+#                     opponent,
+#                 )
+#                 if freedom_code != 2:
+#                     if empty_count == 2:   score += _scaled_score(C_OPEN3, freedom_code)
+#                     elif empty_count == 1: score += _scaled_score(C_CLOSE3, freedom_code)
+#                 break
+#     elif player_count == 2:
+#         for i in range(n - 1):
+#             if window[i] == player and window[i+1] == player:
+#                 freedom_code = _freedom_code_from_values(
+#                     opponent if i > 0 and window[i-1] == opponent else EMPTY,
+#                     opponent if i+1 < n-1 and window[i+2] == opponent else EMPTY,
+#                     opponent,
+#                 )
+#                 if freedom_code != 2:
+#                     if empty_count == 3:   score += _scaled_score(C_OPEN2, freedom_code)
+#                     elif empty_count == 2: score += _scaled_score(C_CLOSE2, freedom_code)
+#                 break
+#     elif player_count == 1:
+#         score += 10
+#     return score
 
 
 def get_lines(board: np.ndarray) -> list:

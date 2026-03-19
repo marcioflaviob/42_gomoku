@@ -9,7 +9,8 @@ export enum Status {
 
 export enum MoveStatus {
   Success = 'success',
-  Forbidden = 'forbidden'
+  Forbidden = 'forbidden',
+  Hint = 'hint'
 }
 
 export enum GameMode {
@@ -20,6 +21,7 @@ export enum GameMode {
 export interface Board {
   status: MoveStatus,
   board: Status[][],
+  heatmap?: (number | null)[][],
   aiResponseTime: number,
   player1Captures: number,
   player2Captures: number,

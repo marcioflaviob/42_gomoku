@@ -1,7 +1,5 @@
 # cython: boundscheck=False, wraparound=False, cdivision=True, nonecheck=False, initializedcheck=False
 
-from ai.constants import BOARD_SIZE, EMPTY
-from ai.optimizer import get_candidate_moves
 from ai.moves import apply_capture, check_win
 from ai.heuristics import evaluate_board_full_mv
 cimport numpy as cnp
@@ -592,12 +590,127 @@ cpdef tuple get_best_move(
     return best_move, best_score
 
 
+cpdef dict get_heatmap_scores(
+    cnp.ndarray board,
+    int player,
+    int player1_captures,
+    int player2_captures,
+    tuple last_move,
+    int depth = 2,
+    int max_candidates = 15,
+):
+    """
+    Return a {(row, col): score} map computed with the same root-search
+    logic as get_best_move, so heatmap rankings stay aligned with hints.
+    """
+    init_zobrist()
+    transposition_table.clear()
+
+    cdef cnp.int64_t[:, :] board_mv = board
+    cdef unsigned long long current_hash = compute_initial_hash(board_mv)
+    cdef int opponent = 3 - player
+    cdef bint player_is_1 = (player == 1)
+
+    cdef int    p1_cap, p2_cap, captured, r, c, m_r, m_c
+    cdef double score, delta_score
+    cdef tuple  move
+    cdef list   captured_positions
+    cdef bint   is_empty_board = True
+    cdef unsigned long long next_hash
+
+    # Incremental delta variables
+    cdef int pre_pl, pre_op, pre_cap_pot, pre_cap_sc
+    cdef int post_pl, post_op, post_cap_pot, post_cap_sc
+
+    cdef cnp.ndarray[cnp.int32_t, ndim=2] cand_np = np.zeros((19, 19), dtype=np.int32)
+    cdef int[:, :] candidate_board = cand_np
+
+    cdef dict move_scores = {}
+
+    for r in range(19):
+        for c in range(19):
+            if board_mv[r, c] != 0:
+                is_empty_board = False
+                update_candidates(candidate_board, r, c, 1)
+
+    if is_empty_board:
+        move_scores[(9, 9)] = 0.0
+        return move_scores
+
+    cdef int p_caps_init = player1_captures if player_is_1 else player2_captures
+    cdef int o_caps_init = player2_captures if player_is_1 else player1_captures
+    cdef double initial_board_score = evaluate_board_full_mv(
+        board_mv, player, p_caps_init, o_caps_init
+    )
+
+    cdef list sorted_candidates = sort_candidates(board, candidate_board, player, max_candidates)
+
+    for move in sorted_candidates:
+        m_r = move[0]; m_c = move[1]
+
+        # BEFORE move
+        pre_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
+        pre_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
+        pre_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+        if player_is_1:
+            pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
+        else:
+            pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
+
+        # DO
+        board_mv[m_r, m_c] = player
+        next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][player - 1]
+        update_candidates(candidate_board, m_r, m_c, 1)
+
+        p1_cap = player1_captures
+        p2_cap = player2_captures
+        captured_positions = apply_capture(board, move, player)
+        for cap_r, cap_c in captured_positions:
+            next_hash ^= ZOBRIST_TABLE[cap_r][cap_c][opponent - 1]
+            update_candidates(candidate_board, cap_r, cap_c, -1)
+        captured = len(captured_positions)
+        if player == 1:
+            p1_cap += captured
+        else:
+            p2_cap += captured
+
+        # AFTER move
+        post_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
+        post_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
+        post_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+        if player_is_1:
+            post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
+        else:
+            post_cap_sc = _mm_score_captures(p2_cap, p1_cap)
+
+        delta_score = <double>(
+            (post_pl - post_op + post_cap_pot + post_cap_sc) -
+            (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
+        )
+
+        score = minimax(
+            board, depth - 1, -INF, INF, False, player,
+            p1_cap, p2_cap, candidate_board, move, next_hash,
+            initial_board_score + delta_score,
+        )
+        move_scores[(m_r, m_c)] = score
+
+        # UNDO
+        for r, c in captured_positions:
+            board_mv[r, c] = opponent
+            update_candidates(candidate_board, r, c, 1)
+        board_mv[m_r, m_c] = 0
+        update_candidates(candidate_board, m_r, m_c, -1)
+
+    return move_scores
+
+
 # ===========================================================================
 # Candidate sorter
 # ===========================================================================
 
 cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
-                            int player):
+                            int player, int max_count=15):
     cdef int center   = 9
     cdef int opponent = 3 - player
 
@@ -670,4 +783,26 @@ cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
                 scored_moves.append((score_i, (r, c)))
 
     scored_moves.sort(reverse=True)
-    return [item[1] for item in scored_moves[:15]]
+    if max_count > 0:
+        return [item[1] for item in scored_moves[:max_count]]
+    return [item[1] for item in scored_moves]
+
+
+cpdef list get_candidates_for_heatmap(cnp.ndarray board, int player):
+    """Return all sorted candidates (same policy as minimax, no top-N cutoff)."""
+    cdef cnp.int64_t[:, :] board_mv = board
+    cdef cnp.ndarray[cnp.int32_t, ndim=2] cand_np = np.zeros((19, 19), dtype=np.int32)
+    cdef int[:, :] candidate_board = cand_np
+    cdef int r, c
+    cdef bint is_empty_board = True
+
+    for r in range(19):
+        for c in range(19):
+            if board_mv[r, c] != 0:
+                is_empty_board = False
+                update_candidates(candidate_board, r, c, 1)
+
+    if is_empty_board:
+        return [(9, 9)]
+
+    return sort_candidates(board, candidate_board, player, 0)
