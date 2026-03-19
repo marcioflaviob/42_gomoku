@@ -277,15 +277,7 @@ cpdef double negascout(
         compteur_heuristique += 1
         return board_score
 
-    cdef int dynamic_max
-    if depth >= 8:
-        dynamic_max = 10
-    elif depth >= 3:
-        dynamic_max = 5
-    else:
-        dynamic_max = 3
-
-    candidates = sort_candidates(board, candidate_board, current_player, dynamic_max)
+    candidates = sort_candidates(board, candidate_board, current_player)
     if not candidates:
         return board_score
 
