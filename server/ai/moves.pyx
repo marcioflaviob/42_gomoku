@@ -106,7 +106,7 @@ cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int colo
         return 0
 
     cdef int opponent = 3 - color
-    cdef int EMPTY = 0  # Assurez-vous que cette constante correspond à votre code
+    cdef int EMPTY = 0
 
     cdef int DRS[4]
     cdef int DCS[4]
@@ -125,7 +125,7 @@ cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int colo
         dr = DRS[d]
         dc = DCS[d]
 
-        # 1. Remplissage du buffer (Les murs et bords sont traités comme des ennemis)
+        # Remplissage du buffer (Les murs et bords sont traités comme des ennemis)
         for i in range(-4, 5):
             r = row + dr * i
             c = col + dc * i
@@ -134,12 +134,11 @@ cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int colo
             else:
                 buf[i + 4] = opponent 
         found = False
-        # 2. Scanner les fenêtres de 6 cases (indices : 0..5, 1..6, 2..7, 3..8)
+        # Scanner les fenêtres de 6 cases (indices : 0..5, 1..6, 2..7, 3..8)
         for i in range(4):
-            # LE THÉORÈME : La fenêtre de 6 DOIT commencer et finir par un vide
             if buf[i] == EMPTY and buf[i + 5] == EMPTY:
                 wpc = 0
-                # On ne vérifie que les 4 cases du milieu !
+                # On ne vérifie que les 4 cases du milieu
                 for j in range(1, 5):
                     v = buf[i + j]
                     if v == color:
@@ -148,13 +147,13 @@ cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int colo
                         wpc = -10  # Annulation instantanée si un ennemi est dans la zone
                         break
                         
-                # S'il y a exactement 3 pions (donc 1 vide restant), c'est un trois libre !
+                # S'il y a exactement 3 pions (donc 1 vide restant), c'est un trois libre
                 if wpc == 3:
                     found = True
                     break
         if found:
             free_three_count += 1
-            # EARLY EXIT : Si on a déjà trouvé 2 trois libres, inutile de vérifier les autres axes !
+            # Si on a déjà trouvé 2 trois libres, inutile de vérifier les autres directions
             if free_three_count >= 2:
                 return 1
     return 0
@@ -174,9 +173,8 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
     DRS[3] = 1; DCS[3] = -1
 
     cdef int opponent = 3 - color
-    cdef int EMPTY = 0  # Assurez-vous que 0 est bien votre constante EMPTY
+    cdef int EMPTY = 0
     
-    # Déclaration stricte de TOUTES les variables pour le nogil
     cdef int k, d, dr, dc, i
     cdef int r, c, rr, cc
     cdef int seg[5]
@@ -189,7 +187,7 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
             dr = DRS[d]
             dc = DCS[d]
             
-            # 1. Remplissage de la fenêtre de 5 cases centrée sur (r, c)
+            # Remplissage de la fenêtre de 5 cases centrée sur (r, c)
             for i in range(5):
                 rr = r + dr * (i - 2)
                 cc = c + dc * (i - 2)
@@ -198,10 +196,6 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
                 else:
                     seg[i] = -1   # Mur / Hors-plateau
 
-            # 2. La pierre centrale seg[2] est notre pierre.
-            # On vérifie les deux paires possibles qui l'incluent.
-
-            # -- PAIRE 1 : La paire est formée par seg[1] et seg[2] --
             if seg[1] == color:
                 # O X X . (L'adversaire bloque à gauche, l'espace est à droite)
                 if seg[0] == opponent and seg[3] == EMPTY:
@@ -210,7 +204,6 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
                 if seg[0] == EMPTY and seg[3] == opponent:
                     return 1
 
-            # -- PAIRE 2 : La paire est formée par seg[2] et seg[3] --
             if seg[3] == color:
                 # . X X O (L'espace est à gauche, l'adversaire bloque à droite)
                 if seg[1] == EMPTY and seg[4] == opponent:
@@ -218,5 +211,4 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
                 # O X X . (L'adversaire bloque à gauche, l'espace est à droite) -> MANQUANT !
                 if seg[1] == opponent and seg[4] == EMPTY:
                     return 1
-
     return 0

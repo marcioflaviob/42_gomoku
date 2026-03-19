@@ -5,11 +5,9 @@ import numpy as np
 
 cnp.import_array()
 
-# ── Compile-time constants ─────────────────────────────────────────────────────
 DEF EMPTY      = 0
 DEF BOARD_SIZE = 19
 
-# ── C-level score constants ────────────────────────────────────────────────────
 cdef int C_OPEN4   = 100000
 cdef int C_CLOSE4  = 10000
 cdef int C_OPEN3   = 5000
@@ -18,18 +16,12 @@ cdef int C_OPEN2   = 200
 cdef int C_CLOSE2  = 50
 cdef int C_CAPTURE = 3000
 
-# ── Direction tables (H, V, diag, anti-diag) ─────────────────────────────────
 cdef int DIRS_R[4]
 cdef int DIRS_C[4]
 DIRS_R[0] = 0;  DIRS_C[0] = 1
 DIRS_R[1] = 1;  DIRS_C[1] = 0
 DIRS_R[2] = 1;  DIRS_C[2] = 1
 DIRS_R[3] = 1;  DIRS_C[3] = -1
-
-
-# ===========================================================================
-# Low-level scoring helpers  (all nogil — pure C arithmetic)
-# ===========================================================================
 
 cdef inline int _scaled_score(int base_score, int freedom_code) nogil:
     if freedom_code == 0:
@@ -142,16 +134,6 @@ cdef inline int _score_captures_c(int p_caps, int o_caps) nogil:
     return score
 
 
-# ===========================================================================
-# Incremental 4-line scorers
-# ===========================================================================
-# When a stone is placed at (row, col), only windows on the 4 lines through
-# that cell can change.  Captures are always inline with the placed stone,
-# so those 4 lines cover ALL board changes.
-#
-# Re-scoring those 4 lines reduces leaf-node work from ~400 window evals
-# to ~56 — an ~7× speed-up vs a full board scan.
-
 cdef int _score_4_lines(cnp.int64_t[:, :] board, int player,
                          int row, int col) nogil:
     """Score every 6-window in the 4 lines that pass through (row, col)."""
@@ -217,11 +199,7 @@ cdef int _capture_score_4_lines(cnp.int64_t[:, :] board, int player,
 
     return total
 
-
-# ===========================================================================
-# Full-board scorers  (called once per search root to seed board_score)
-# ===========================================================================
-
+# SCore full board
 cdef int _score_lines_fast(cnp.int64_t[:, :] board, int player):
     cdef int total = 0
     cdef int r, c, i, length, rr, cc
@@ -245,7 +223,7 @@ cdef int _score_lines_fast(cnp.int64_t[:, :] board, int player):
                 player,
             )
 
-    # Diagonal (top-right)
+    # Diagonal
     for c in range(BOARD_SIZE):
         rr = 0; cc = c; length = BOARD_SIZE - c
         if length >= 6:
@@ -375,11 +353,7 @@ cdef int _detect_potential_captures_fast(cnp.int64_t[:, :] board, int player):
 
     return potential_capture_score
 
-
-# ===========================================================================
-# Public cpdef exports (called from minimax.pyx and the FastAPI layer)
-# ===========================================================================
-
+# Public
 cpdef int score_4_lines_for_player(cnp.int64_t[:, :] board, int player,
                                     int row, int col):
     return _score_4_lines(board, player, row, col)

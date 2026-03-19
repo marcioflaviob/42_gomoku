@@ -85,10 +85,6 @@ const BoardPage: React.FC = () => {
     const heatRange = Math.max(heatMax - heatMin, 1e-9);
 
     const normalizeHeatScore = (score: number): number => {
-      // Handle all payload formats robustly:
-      // - already normalized [0, 1]
-      // - percent [0, 100]
-      // - raw minimax values (dynamic min-max)
       if (heatMin >= 0 && heatMax <= 1.000001) {
         return clamp01(score);
       }

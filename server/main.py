@@ -13,15 +13,11 @@ class Status:
     Suggested = 3
 
 try:
-    # from ai.moves import play, undo, redo, apply_capture
     from ai.minimax import get_best_move, get_heatmap_scores, get_candidates_for_heatmap
     from ai.heuristics import evaluate_board_full_mv
 except ImportError as e:
-    # Fallback to pure Python modules when Cython extensions are not built yet.
     print("⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️")
     print(f"error: {e}")
-    # from ai.moves import play, undo, redo
-    # from ai.minimax import get_best_move
 
 
 def create_new_game_state():
@@ -47,10 +43,8 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Mount Socket.IO ASGI app
 app_sio = socketio.ASGIApp(sio, app)
 
-# Store games per client
 games = {}
 
 @sio.event
@@ -351,7 +345,8 @@ async def update(sid, data):
             current_game,
             winner=result,
             elapsed=elapsed_time,
-            color=Status.Player2
+            color=Status.Player2,
+            heatmap=heatmap,
         )
 
     update_scores(current_game)

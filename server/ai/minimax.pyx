@@ -21,14 +21,7 @@ cdef int FLAG_EXACT = 0
 cdef int FLAG_ALPHA = 1
 cdef int FLAG_BETA  = 2
 
-# ── C-level score constants (mirrors heuristics.pyx — avoids cross-module call) ─
 cdef int _MM_C_CAPTURE = 3000
-
-
-# ===========================================================================
-# Local cdef helpers  (duplicated from heuristics to avoid Python call overhead)
-# Calling a cpdef across modules incurs Python dispatch; these are pure C calls.
-# ===========================================================================
 
 cdef int _mm_score_4_lines(cnp.int64_t[:, :] board, int player,
                              int row, int col) nogil:
@@ -37,7 +30,6 @@ cdef int _mm_score_4_lines(cnp.int64_t[:, :] board, int player,
     cdef int d, dr, dc, rr, cc, llen, i
     cdef int line_buf[19]
 
-    # direction table inline (same as DIRS_R/C in heuristics)
     cdef int drs[4]
     cdef int dcs[4]
     drs[0] = 0; dcs[0] = 1
@@ -125,7 +117,7 @@ cdef inline int _mm_score_window6(
     int v0, int v1, int v2, int v3, int v4, int v5,
     int player,
 ) nogil:
-    """Minimal clone of heuristics._score_window6_values, all C, no GIL."""
+    """Score a 6-cell window for the given player. 0=empty, 1=player1, 2=player2."""
     cdef int opponent = 3 - player
     cdef int values[6]
     cdef int pc = 0, oc = 0, ec = 0
@@ -190,11 +182,6 @@ cdef inline int _mm_scaled(int base, int freedom_code) nogil:
     elif freedom_code == 1: return base
     return (base * 3) // 10
 
-
-# ===========================================================================
-# Zobrist
-# ===========================================================================
-
 cpdef void init_zobrist():
     global zobrist_initialized
     if zobrist_initialized:
@@ -239,18 +226,6 @@ cdef inline void update_candidates(int[:, :] candidate_board,
             if 0 <= r < 19 and 0 <= c < 19:
                 candidate_board[r, c] += delta
 
-
-# ===========================================================================
-# Negascout (Principal Variation Search) with Zobrist transposition table
-# and INCREMENTAL board evaluation
-#
-# Convention: board_score is ALWAYS from current_player's perspective.
-# The caller negates it before passing down, so every node maximizes.
-#
-# board_score tracks the exact full-board evaluation for the current position —
-# accumulated via deltas from the root.  Leaf nodes return O(1).
-# ===========================================================================
-
 cpdef double negascout(
     cnp.int64_t[:, :] board,
     int depth,
@@ -271,7 +246,6 @@ cpdef double negascout(
     cdef int opponent = 3 - current_player
     cdef bint player_is_root = (current_player == root_player)
 
-    # ── Transposition-table lookup ─────────────────────────────────────────
     cdef tuple tt_key = (current_hash, player1_captures, player2_captures, current_player)
     if tt_key in transposition_table:
         stored_depth, stored_score, stored_flag = transposition_table[tt_key]
@@ -283,13 +257,13 @@ cpdef double negascout(
             elif stored_flag == FLAG_BETA and stored_score >= beta:
                 return stored_score
 
-    # ── Win detection ──────────────────────────────────────────────────────
+    # win detection
     cdef int lm_r = last_move[0]
     cdef int lm_c = last_move[1]
     if check_win(board, lm_r, lm_c, "me", [player1_captures, player2_captures]):
         compteur_heuristique += 1
         winner_color = <int>board[lm_r, lm_c]
-        if winner_color == player:
+        if winner_color == current_player:
             return 10_000_000.0
         elif winner_color == opponent:
             return -10_000_000.0
@@ -299,13 +273,10 @@ cpdef double negascout(
             return -450_000.0
         return board_score
 
-    # ── Leaf node ──────────────────────────────────────────────────────────
-    # board_score is already from current_player's POV (negated at each level).
     if depth == 0:
         compteur_heuristique += 1
         return board_score
 
-    # ── Candidate moves ────────────────────────────────────────────────────
     cdef int dynamic_max
     if depth >= 8:
         dynamic_max = 10
@@ -318,7 +289,6 @@ cpdef double negascout(
     if not candidates:
         return board_score
 
-    # ── Local variable declarations ────────────────────────────────────────
     cdef double score, delta_score, null_alpha
     cdef int p1_cap, p2_cap, captured, r, c, m_r, m_c
     cdef tuple move
@@ -335,7 +305,7 @@ cpdef double negascout(
     for move in candidates:
         m_r = move[0]; m_c = move[1]
 
-        # ── Incremental eval: BEFORE ───────────────────────────────────────
+        # Incremental eval: BEFORE
         pre_pl      = _mm_score_4_lines(board, current_player, m_r, m_c)
         pre_op      = _mm_score_4_lines(board, opponent,       m_r, m_c)
         pre_cap_pot = _mm_capture_score_4_lines(board, current_player, m_r, m_c)
@@ -344,7 +314,7 @@ cpdef double negascout(
         else:
             pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
 
-        # ── DO ────────────────────────────────────────────────────────────
+        # DO
         board[m_r, m_c] = current_player
         next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
         update_candidates(candidate_board, m_r, m_c, 1)
@@ -359,7 +329,7 @@ cpdef double negascout(
         if current_player == 1: p1_cap += captured
         else:                   p2_cap += captured
 
-        # ── Incremental eval: AFTER ────────────────────────────────────────
+        # Incremental eval: AFTER
         post_pl      = _mm_score_4_lines(board, current_player, m_r, m_c)
         post_op      = _mm_score_4_lines(board, opponent,       m_r, m_c)
         post_cap_pot = _mm_capture_score_4_lines(board, current_player, m_r, m_c)
@@ -373,13 +343,8 @@ cpdef double negascout(
             (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
         )
 
-        # ── NEGASCOUT SEARCH ───────────────────────────────────────────────
-        # Child's board_score is from the opponent's POV:
-        #   negate (board_score + delta) since the roles flip.
-        # Window also flips and negates: (-beta, -alpha).
-
         if first_move:
-            # PV move: full-window search
+            # full-window search
             score = -negascout(
                 board, depth - 1, -beta, -alpha,
                 opponent, root_player,
@@ -396,7 +361,6 @@ cpdef double negascout(
                 -(board_score + delta_score),
             )
 
-            # Scout failed high → move ordering was wrong, re-search with full window
             if alpha < score < beta:
                 score = -negascout(
                     board, depth - 1, -beta, -score,
@@ -405,31 +369,23 @@ cpdef double negascout(
                     -(board_score + delta_score),
                 )
 
-        # ── UNDO ──────────────────────────────────────────────────────────
         board[m_r, m_c] = 0
         update_candidates(candidate_board, m_r, m_c, -1)
         for r, c in captured_positions:
             board[r, c] = opponent
             update_candidates(candidate_board, r, c, 1)
 
-        # ── Alpha update & cutoff ──────────────────────────────────────────
         if score > alpha:
             alpha = score
         if alpha >= beta:
             break  # Beta cutoff
 
-    # ── Transposition table store ──────────────────────────────────────────
     if alpha <= original_alpha: flag = FLAG_ALPHA
     elif alpha >= beta:         flag = FLAG_BETA
     else:                       flag = FLAG_EXACT
     transposition_table[tt_key] = (depth, alpha, flag)
 
     return alpha
-
-
-# ===========================================================================
-# Search root
-# ===========================================================================
 
 cpdef tuple get_best_move(
     cnp.ndarray board,
@@ -468,11 +424,9 @@ cpdef tuple get_best_move(
     cdef int pre_pl, pre_op, pre_cap_pot, pre_cap_sc
     cdef int post_pl, post_op, post_cap_pot, post_cap_sc
 
-    # Candidate influence matrix in C memory
     cdef cnp.ndarray[cnp.int32_t, ndim=2] cand_np = np.zeros((19, 19), dtype=np.int32)
     cdef int[:, :] candidate_board = cand_np
 
-    # Populate influence matrix from existing stones
     for r in range(19):
         for c in range(19):
             if board_mv[r, c] != 0:
@@ -482,8 +436,8 @@ cpdef tuple get_best_move(
     if is_empty_board:
         return ((9, 9), 0.0)
 
-    # ── Seed the incremental board_score with a single full-board evaluation ──
-    # This is the ONLY full scan; all subsequent evaluations use deltas.
+
+    # the only full scan, all the next evaluations use deltas
     cdef int p_caps_init = player1_captures if player_is_1 else player2_captures
     cdef int o_caps_init = player2_captures if player_is_1 else player1_captures
     cdef double initial_board_score = evaluate_board_full_mv(
@@ -495,7 +449,7 @@ cpdef tuple get_best_move(
     for move in sorted_candidates:
         m_r = move[0]; m_c = move[1]
 
-        # ── Incremental eval: BEFORE root move ──
+        # Incremental eval: BEFORE root move
         pre_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
         pre_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
         pre_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
@@ -504,7 +458,7 @@ cpdef tuple get_best_move(
         else:
             pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
 
-        # ── DO ──────────────────────────────────────────────────────────
+        # DO
         board_mv[m_r, m_c] = player
         next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][player - 1]
         update_candidates(candidate_board, m_r, m_c, 1)
@@ -519,7 +473,7 @@ cpdef tuple get_best_move(
         if player == 1: p1_cap += captured
         else:           p2_cap += captured
 
-        # ── Incremental eval: AFTER root move ──
+        # Incremental eval: AFTER root move 
         post_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
         post_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
         post_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
@@ -533,8 +487,6 @@ cpdef tuple get_best_move(
             (pre_pl  - pre_op  + pre_cap_pot  + pre_cap_sc)
         )
 
-        # Root calls negascout as the opponent's turn (we just placed player's stone).
-        # board_score for the child is from opponent's POV → negate.
         score = -negascout(
             board_mv, depth - 1, -beta, -alpha,
             opponent, player,
@@ -548,7 +500,7 @@ cpdef tuple get_best_move(
 
         alpha = max(alpha, best_score)
 
-        # ── UNDO ────────────────────────────────────────────────────────
+        # UNDO
         for r, c in captured_positions:
             board_mv[r, c] = opponent
             update_candidates(candidate_board, r, c, 1)
@@ -559,8 +511,6 @@ cpdef tuple get_best_move(
             break
 
     cdef double elapsed = (time.time() - start) * 1000
-    print(f"🧠 L'IA a terminé ! Noeuds évalués : {compteur_heuristique}")
-    print(f"AI move: {best_move} | score: {best_score} | time: {elapsed:.1f}ms | depth: {depth}")
 
     return best_move, best_score
 
@@ -574,10 +524,6 @@ cpdef dict get_heatmap_scores(
     int depth = 2,
     int max_candidates = 15,
 ):
-    """
-    Return a {(row, col): score} map computed with the same root-search
-    logic as get_best_move, so heatmap rankings stay aligned with hints.
-    """
     init_zobrist()
     transposition_table.clear()
 
@@ -679,13 +625,8 @@ cpdef dict get_heatmap_scores(
 
     return move_scores
 
-
-# ===========================================================================
-# Candidate sorter
-# ===========================================================================
-
 cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
-                            int player, int max_count=20):
+                            int player, int max_count=30):
     cdef int center   = 9
     cdef int opponent = 3 - player
 
@@ -713,7 +654,6 @@ cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
                 for d in range(4):
                     dr = dirs[d][0]; dc = dirs[d][1]
 
-                    # -- Comptage ALLIÉS --
                     count_ally = 0
                     for step in range(1, 5):
                         nr = r + dr * step; nc = c + dc * step
@@ -727,7 +667,6 @@ cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
                             count_ally += 1
                         else: break
 
-                    # -- Comptage ENNEMIS --
                     count_enemy = 0
                     for step in range(1, 5):
                         nr = r + dr * step; nc = c + dc * step
@@ -741,7 +680,7 @@ cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
                             count_enemy += 1
                         else: break
 
-                    # -- SCORING TACTIQUE --
+                    # SCORING TACTIQUE
                     if count_ally >= 4:   score_i += 100000
                     elif count_ally == 3: score_i += 1000
                     elif count_ally == 2: score_i += 100
@@ -752,7 +691,7 @@ cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
                     elif count_enemy == 2: score_i += 80
                     elif count_enemy == 1: score_i += 8
 
-                # Spatial tiebreaker: favorise le centre
+                # favoriser le centre
                 distance = abs(r - center) + abs(c - center)
                 score_i -= distance
 
@@ -762,7 +701,6 @@ cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
     # Tri du meilleur au pire
     scored_moves.sort(reverse=True)
     
-    # === LE GARDE-FOU (SAFEGUARD) ===
     if max_count > 0:
         for item in scored_moves:
             # item[0] = le score, item[1] = les coordonnées (r, c)
@@ -778,7 +716,6 @@ cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
     return [item[1] for item in scored_moves]
 
 cpdef list get_candidates_for_heatmap(cnp.ndarray board, int player):
-    """Return all sorted candidates (same policy as minimax, no top-N cutoff)."""
     cdef cnp.int64_t[:, :] board_mv = board
     cdef cnp.ndarray[cnp.int32_t, ndim=2] cand_np = np.zeros((19, 19), dtype=np.int32)
     cdef int[:, :] candidate_board = cand_np
