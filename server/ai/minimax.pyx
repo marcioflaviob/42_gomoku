@@ -1,6 +1,6 @@
 # cython: boundscheck=False, wraparound=False, cdivision=True, nonecheck=False, initializedcheck=False
 
-from ai.moves cimport apply_capture, check_win
+from ai.moves cimport apply_capture, check_win, check_double_three
 from ai.heuristics cimport evaluate_board_full_mv
 cimport numpy as cnp
 from libc.stdlib cimport rand, srand, RAND_MAX
@@ -286,10 +286,12 @@ cpdef double minimax(
                 return stored_score
 
     # Win detection (checks last placed stone only)
+    cdef int lm_r = last_move[0]
+    cdef int lm_c = last_move[1]
     if check_win(board, last_move[0], last_move[1], "me",
                  [player1_captures, player2_captures]):
         compteur_heuristique += 1
-        winner_color = <int>board_mv[last_move[0], last_move[1]]
+        winner_color = <int>board_mv[lm_r, lm_c]
         if winner_color == player:
             return 10_000_000.0
         elif winner_color == opponent:
@@ -788,7 +790,8 @@ cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
                 distance = abs(r - center) + abs(c - center)
                 score_i -= distance
 
-                scored_moves.append((score_i, (r, c)))
+                if not check_double_three(board, r, c, player):
+                    scored_moves.append((score_i, (r, c)))
 
     scored_moves.sort(reverse=True)
     if max_count > 0:
