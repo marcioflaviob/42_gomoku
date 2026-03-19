@@ -3,6 +3,7 @@ import { BOARD_SIZE, GameMode, MoveStatus, Status, type Board } from '../utils/c
 import { io, Socket } from 'socket.io-client';
 import { useLocation } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
+import { useScoreBar } from '../hooks/useScoreBar';
 
 type Heatmap = (number | null)[][];
 
@@ -10,20 +11,25 @@ const createEmptyHeatmap = (): Heatmap =>
   Array.from({ length: BOARD_SIZE }, () => Array.from({ length: BOARD_SIZE }, () => null));
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+const centerIndex = Math.floor(BOARD_SIZE / 2);
 
 const BoardPage: React.FC = () => {
     const location = useLocation();
-    const { mode } : { mode: GameMode } = location.state || {};
+    const { mode, pro = false } : { mode: GameMode; pro: boolean } = location.state || {};
     const { theme } = useTheme();
     const [currentPlayer, setCurrentPlayer] = useState<number>(1);
     const [loading, setLoading] = useState<boolean>(false);
     const socketRef = useRef<Socket | null>(null);
+    const modeRef = useRef<GameMode | undefined>(mode);
+    const winnerRef = useRef<Board['winner']>(0);
     const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
     const [player1Captures, setPlayer1Captures] = useState<number>(0);
     const [player2Captures, setPlayer2Captures] = useState<number>(0);
+    const { player1Score, player2Score, player1ScorePct, player2ScorePct, updateScores } = useScoreBar();
     const [aiResponseTime, setAiResponseTime] = useState<number>(0);
     const [winner, setWinner] = useState<Board['winner']>(0);
     const [status, setStatus] = useState<MoveStatus>(MoveStatus.Success);
+    const [proRuleMessage, setProRuleMessage] = useState<string>('');
     const [canUndo, setCanUndo] = useState<boolean>(false);
     const [canRedo, setCanRedo] = useState<boolean>(false);
     const [heatmap, setHeatmap] = useState<Heatmap>(createEmptyHeatmap);
@@ -31,22 +37,43 @@ const BoardPage: React.FC = () => {
       Array.from({ length: BOARD_SIZE }, () => Status.Empty)
     ));
 
+    const isNullGame = useMemo(
+      () => winner === 0 && board.every((row) => row.every((cell) => cell === Status.Player1 || cell === Status.Player2)),
+      [board, winner]
+    );
+
     const rows = Array.from({ length: BOARD_SIZE }, (_, i) => i);
     const cols = Array.from({ length: BOARD_SIZE }, (_, i) => i);
     const cellSize = 40;
     const statusMessage = winner !== 0
       ? `Player ${winner} wins!`
+      : isNullGame
+        ? 'Game is null.'
+      : proRuleMessage
+        ? proRuleMessage
       : status !== MoveStatus.Success
         ? 'Forbidden move. Try another position.'
         : '';
     const statusClassName = winner !== 0
       ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+      : isNullGame
+        ? 'bg-slate-100 text-slate-800 border-slate-300'
+      : proRuleMessage
+        ? 'bg-amber-100 text-amber-900 border-amber-300'
       : status !== MoveStatus.Success
         ? 'bg-red-100 text-red-800 border-red-300'
         : 'bg-transparent text-transparent border-transparent';
 
     const [showHints, setShowHints] = useState<boolean>(false);
     const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
+
+    useEffect(() => {
+      modeRef.current = mode;
+    }, [mode]);
+
+    useEffect(() => {
+      winnerRef.current = winner;
+    }, [winner]);
 
     const heatValues = useMemo(
       () => heatmap.flat().filter((value): value is number => value !== null),
@@ -92,9 +119,40 @@ const BoardPage: React.FC = () => {
     // Column indicators: 0-18 for 19 columns
     const colIndicators = Array.from({ length: BOARD_SIZE }, (_, i) => i.toString());
 
+    const player1StoneCount = useMemo(
+      () => board.flat().filter((piece) => piece === Status.Player1).length,
+      [board]
+    );
+
+    const getProRuleViolation = (row: number, col: number): string => {
+      if (!pro || currentPlayer !== 1) return '';
+
+      if (player1StoneCount === 0 && (row !== centerIndex || col !== centerIndex)) {
+        return `Pro rule: Player 1 first stone must be at center (${centerIndex}, ${centerIndex}).`;
+      }
+
+      if (player1StoneCount === 1) {
+        const distance = Math.max(Math.abs(row - centerIndex), Math.abs(col - centerIndex));
+        if (distance < 3) {
+          return 'Pro rule: Player 1 second stone must be at least 3 intersections away from center.';
+        }
+      }
+
+      return '';
+    };
+
     const handlePiecePlacement = (row: number, col: number, piece: Status) => {
       if (piece !== Status.Empty && piece !== Status.Suggested) return;
+      if (mode === GameMode.AIBattle) return;
       if (loading || winner) return;
+
+      const proViolation = getProRuleViolation(row, col);
+      if (proViolation) {
+        setProRuleMessage(proViolation);
+        return;
+      }
+
+      setProRuleMessage('');
       setAiResponseTime(0);
       socketRef.current?.emit('update', { move: "placePiece", row, col, color: currentPlayer, showHints, mode });
       if (mode === GameMode.Multiplayer) setCurrentPlayer((prev) => (prev === 1 ? 2 : 1));
@@ -116,6 +174,15 @@ const BoardPage: React.FC = () => {
 
     const handlePlayAgain = () => {
       if (winner === 0 || loading) return;
+      if (mode === GameMode.AIBattle) {
+        setWinner(0);
+        setStatus(MoveStatus.Success);
+        setProRuleMessage('');
+        setCurrentPlayer(1);
+        setLoading(true);
+        socketRef.current?.emit('update', { move: 'start_ai_battle', mode: GameMode.AIBattle, showHints: false });
+        return;
+      }
       socketRef.current?.emit('update', { move: 'reset' });
       setCurrentPlayer(1);
       setLoading(true);
@@ -124,6 +191,7 @@ const BoardPage: React.FC = () => {
     const getClassNameForPiece = (piece: Status) => {
       switch (piece) {
         case Status.Empty:
+          if (mode === GameMode.AIBattle) return '';
           return 'hover:opacity-50 hover:bg-blue-300 cursor-pointer';
         case Status.Player1:
           return 'bg-white border border-gray-400';
@@ -142,8 +210,13 @@ const BoardPage: React.FC = () => {
 
       socketRef.current.on('boardUpdate', (data: Board) => {
         console.log('Received board update:', data);
-        if (winner !== 0) return; // Ignore updates if game is already won
-        if ((data.color === 2) || (mode === "multiplayer")) setLoading(false);
+        if (winnerRef.current !== 0) return; // Ignore updates if game is already won
+        if (modeRef.current === GameMode.AIBattle) {
+          setLoading(data.winner === 0);
+        } else if ((data.color === 2) || (modeRef.current === GameMode.Multiplayer)) {
+          setLoading(false);
+        }
+        setProRuleMessage('');
         if (data.board) setBoard(data.board);
         if (data.heatmap) {
           setHeatmap(data.heatmap);
@@ -154,6 +227,7 @@ const BoardPage: React.FC = () => {
         if (data.status !== MoveStatus.Hint) setStatus(data.status);
         if (data.player1Captures !== undefined) setPlayer1Captures(data.player1Captures);
         if (data.player2Captures !== undefined) setPlayer2Captures(data.player2Captures);
+        updateScores(data);
         if (data.aiResponseTime) setAiResponseTime(data.aiResponseTime);
         if (data.canUndo !== undefined) setCanUndo(data.canUndo);
         if (data.canRedo !== undefined) setCanRedo(data.canRedo);
@@ -164,10 +238,21 @@ const BoardPage: React.FC = () => {
         console.error('Socket error:', err);
       });
 
+      socketRef.current?.on('connect', () => {
+        if (modeRef.current === GameMode.AIBattle) {
+          setWinner(0);
+          setStatus(MoveStatus.Success);
+          setProRuleMessage('');
+          setCurrentPlayer(1);
+          setLoading(true);
+          socketRef.current?.emit('update', { move: 'start_ai_battle', mode: GameMode.AIBattle, showHints: false });
+        }
+      });
+
       return () => {
         socketRef.current?.disconnect();
       };
-    }, []);
+    }, [updateScores]);
 
     return (
     <div className={`flex flex-col items-center justify-start gap-6 p-6 h-full ${theme === 'dark' ? 'bg-gray-900' : 'bg-amber-50'}`}>
@@ -231,9 +316,32 @@ const BoardPage: React.FC = () => {
           <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Player 2 Captures</h3>
           <p className="text-2xl font-bold text-white bg-gray-900 border border-gray-600 w-fit px-2 rounded">{player2Captures}</p>
         </div>
-        <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
+        {mode !== GameMode.Multiplayer && (<div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
           <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>AI Response Time</h3>
           <p className="text-2xl font-bold text-blue-600">{aiResponseTime === 0 ? ' - ' : `${aiResponseTime.toFixed(3)}s`}</p>
+        </div>)}
+      </div>
+
+      <div className={`w-full max-w-3xl rounded-lg shadow-md p-4 ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className={`text-sm font-semibold ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Board Score</h3>
+          <span className={`text-xs font-medium ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
+            P1 {player1Score} - {player2Score} P2
+          </span>
+        </div>
+        <div className={`w-full h-4 rounded-full overflow-hidden border ${theme === 'dark' ? 'bg-gray-700 border-gray-600' : 'bg-gray-100 border-gray-200'}`}>
+          <div className="flex h-full w-full">
+            <div
+              className="h-full bg-white transition-all duration-300"
+              style={{ width: `${player1ScorePct}%` }}
+              aria-label={`Player 1 score share ${Math.round(player1ScorePct)} percent`}
+            />
+            <div
+              className={`h-full transition-all duration-300 ${theme === 'dark' ? 'bg-blue-500' : 'bg-black'}`}
+              style={{ width: `${player2ScorePct}%` }}
+              aria-label={`Player 2 score share ${Math.round(player2ScorePct)} percent`}
+            />
+          </div>
         </div>
       </div>
 

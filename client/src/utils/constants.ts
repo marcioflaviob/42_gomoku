@@ -15,7 +15,8 @@ export enum MoveStatus {
 
 export enum GameMode {
   Solo = 'solo',
-  Multiplayer = 'multiplayer'
+  Multiplayer = 'multiplayer',
+  AIBattle = 'ai_battle'
 }
 
 export interface Board {
@@ -25,6 +26,8 @@ export interface Board {
   aiResponseTime: number,
   player1Captures: number,
   player2Captures: number,
+  player1Score: number,
+  player2Score: number,
   color: 1 | 2,
   winner: 1 | 2 | 0,
   gameMode: GameMode,

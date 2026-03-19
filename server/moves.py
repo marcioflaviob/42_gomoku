@@ -11,13 +11,17 @@ def create_snapshot(state):
     return {
         "board": state["board"].copy(), # Indispensable pour copier un array NumPy !
         "last_play": state["last_play"].copy(),
-        "captured_white_black": state["captured_white_black"].copy()
+        "captured_white_black": state["captured_white_black"].copy(),
+        "player1Score": state["player1Score"],
+        "player2Score": state["player2Score"]
     }
 
 def restore_snapshot(state, snapshot):
     state["board"] = snapshot["board"].copy()
     state["last_play"] = snapshot["last_play"].copy()
     state["captured_white_black"] = snapshot["captured_white_black"].copy()
+    state["player1Score"] = snapshot["player1Score"]
+    state["player2Score"] = snapshot["player2Score"]
 
 def undo(state):
     if not state["history"]:

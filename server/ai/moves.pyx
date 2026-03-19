@@ -101,7 +101,7 @@ cpdef int check_win(cnp.int64_t[:, :] board, int row, int col, str winner, list 
     return 0
 
 
-cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int color) :
+cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int color):
     if color == 0:
         return 0
 
@@ -129,7 +129,7 @@ cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int colo
         for i in range(-4, 5):
             r = row + dr * i
             c = col + dc * i
-            if 0 <= r < 19 and 0 <= c < 19:
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
                 buf[i + 4] = color if i == 0 else <int>board[r, c]
             else:
                 buf[i + 4] = opponent 
