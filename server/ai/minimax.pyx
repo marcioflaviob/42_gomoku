@@ -250,7 +250,7 @@ cdef inline void update_candidates(int[:, :] candidate_board,
 # returns O(1) instead of O(N²).
 
 cpdef double minimax(
-    cnp.ndarray board,
+    cnp.int64_t[:, :] board,
     int depth,
     double alpha,
     double beta,
@@ -268,10 +268,10 @@ cpdef double minimax(
     cdef double original_alpha = alpha
     cdef double original_beta  = beta
     cdef int opponent = 3 - player
+    cdef int current_player = player if is_maximizing else opponent
 
     # Typed memoryview: direct C pointer arithmetic for board reads/writes,
     # no Python __getitem__/__setitem__ overhead.
-    cdef cnp.int64_t[:, :] board_mv = board
 
     # Transposition-table lookup
     cdef tuple tt_key = (current_hash, player1_captures, player2_captures, is_maximizing)
@@ -296,6 +296,10 @@ cpdef double minimax(
             return 10_000_000.0
         elif winner_color == opponent:
             return -10_000_000.0
+        elif winner_color == 3 and current_player == player:
+            return 450_000.0
+        elif winner_color == 3 and current_player == opponent:
+            return -450_000.0
         # Capture-win ambiguity: return the already-correct incremental score
         return board_score
 
@@ -307,7 +311,6 @@ cpdef double minimax(
         return board_score
 
     # ── Candidate moves ────────────────────────────────────────────────────
-    cdef int current_player = player if is_maximizing else opponent
     cdef bint player_is_1   = (player == 1)
 
     # Local variable declarations (must be at function scope in Cython)
@@ -322,7 +325,14 @@ cpdef double minimax(
     cdef int pre_pl, pre_op, pre_cap_pot, pre_cap_sc
     cdef int post_pl, post_op, post_cap_pot, post_cap_sc
 
-    candidates = sort_candidates(board, candidate_board, player)
+    cdef int dynamic_max
+    if depth >= 8:
+        dynamic_max = 10  # On explore large en haut de l'arbre
+    elif depth >= 3:
+        dynamic_max = 5  # On se concentre sur les bonnes pistes au milieu
+    else:
+        dynamic_max = 3
+    candidates = sort_candidates(board, candidate_board, player, dynamic_max)
     if not candidates:
         return board_score
 
@@ -332,16 +342,16 @@ cpdef double minimax(
             m_r = move[0]; m_c = move[1]
 
             # ── Incremental eval: capture board state BEFORE this move ──
-            pre_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
-            pre_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
-            pre_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+            pre_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
+            pre_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
+            pre_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
             if player_is_1:
                 pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
             else:
                 pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
 
             # ── DO ──────────────────────────────────────────────────────
-            board_mv[m_r, m_c] = current_player
+            board[m_r, m_c] = current_player
             next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
             update_candidates(candidate_board, m_r, m_c, 1)
 
@@ -356,9 +366,9 @@ cpdef double minimax(
             else:                   p2_cap += captured
 
             # ── Incremental eval: capture board state AFTER this move ───
-            post_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
-            post_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
-            post_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+            post_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
+            post_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
+            post_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
             if player_is_1:
                 post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
             else:
@@ -380,10 +390,10 @@ cpdef double minimax(
             alpha     = max(alpha, score)
 
             # ── UNDO ────────────────────────────────────────────────────
-            board_mv[m_r, m_c] = 0
+            board[m_r, m_c] = 0
             update_candidates(candidate_board, m_r, m_c, -1)
             for r, c in captured_positions:
-                board_mv[r, c] = opponent
+                board[r, c] = opponent
                 update_candidates(candidate_board, r, c, 1)
 
             if beta <= alpha:
@@ -401,16 +411,16 @@ cpdef double minimax(
             m_r = move[0]; m_c = move[1]
 
             # ── Incremental eval: BEFORE ──
-            pre_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
-            pre_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
-            pre_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+            pre_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
+            pre_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
+            pre_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
             if player_is_1:
                 pre_cap_sc = _mm_score_captures(player1_captures, player2_captures)
             else:
                 pre_cap_sc = _mm_score_captures(player2_captures, player1_captures)
 
             # ── DO ──────────────────────────────────────────────────────
-            board_mv[m_r, m_c] = current_player
+            board[m_r, m_c] = current_player
             next_hash = current_hash ^ ZOBRIST_TABLE[m_r][m_c][current_player - 1]
             update_candidates(candidate_board, m_r, m_c, 1)
 
@@ -425,9 +435,9 @@ cpdef double minimax(
             else:                   p2_cap += captured
 
             # ── Incremental eval: AFTER ──
-            post_pl      = _mm_score_4_lines(board_mv, player,   m_r, m_c)
-            post_op      = _mm_score_4_lines(board_mv, opponent, m_r, m_c)
-            post_cap_pot = _mm_capture_score_4_lines(board_mv, player, m_r, m_c)
+            post_pl      = _mm_score_4_lines(board, player,   m_r, m_c)
+            post_op      = _mm_score_4_lines(board, opponent, m_r, m_c)
+            post_cap_pot = _mm_capture_score_4_lines(board, player, m_r, m_c)
             if player_is_1:
                 post_cap_sc = _mm_score_captures(p1_cap, p2_cap)
             else:
@@ -449,10 +459,10 @@ cpdef double minimax(
             beta      = min(beta, score)
 
             # ── UNDO ────────────────────────────────────────────────────
-            board_mv[m_r, m_c] = 0
+            board[m_r, m_c] = 0
             update_candidates(candidate_board, m_r, m_c, -1)
             for r, c in captured_positions:
-                board_mv[r, c] = player
+                board[r, c] = player
                 update_candidates(candidate_board, r, c, 1)
 
             if beta <= alpha:
@@ -572,7 +582,7 @@ cpdef tuple get_best_move(
         )
 
         score = minimax(
-            board, depth - 1, alpha, beta, False, player,
+            board_mv, depth - 1, alpha, beta, False, player,
             p1_cap, p2_cap, candidate_board, move, next_hash,
             initial_board_score + delta_score,
         )
@@ -719,20 +729,20 @@ cpdef dict get_heatmap_scores(
 # Candidate sorter
 # ===========================================================================
 
-cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
+cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
                             int player, int max_count=10):
     cdef int center   = 9
     cdef int opponent = 3 - player
 
-    # Typed memoryview: fast cell reads, no Python __getitem__
-    cdef cnp.int64_t[:, :] board_mv = board
-
+    # Déclarations C strictes
     cdef int r, c, nr, nc, dr, dc, d, step
     cdef int count_ally, count_enemy
-    cdef int score_i            # int score — no float needed here
+    cdef int score_i            
     cdef int distance
     cdef list scored_moves = []
     cdef tuple item
+    cdef list final_moves = []
+    cdef int count = 0
 
     cdef int dirs[4][2]
     dirs[0][0] = 0; dirs[0][1] = 1
@@ -742,40 +752,41 @@ cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
 
     for r in range(19):
         for c in range(19):
-            if board_mv[r, c] == 0 and candidate_board[r, c] > 0:
+            if board[r, c] == 0 and candidate_board[r, c] > 0:
                 score_i = 0
 
                 for d in range(4):
                     dr = dirs[d][0]; dc = dirs[d][1]
 
+                    # -- Comptage ALLIÉS --
                     count_ally = 0
                     for step in range(1, 5):
                         nr = r + dr * step; nc = c + dc * step
-                        if 0 <= nr < 19 and 0 <= nc < 19 and board_mv[nr, nc] == player:
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == player:
                             count_ally += 1
-                        else:
-                            break
+                        else: break
+                        
                     for step in range(1, 5):
                         nr = r - dr * step; nc = c - dc * step
-                        if 0 <= nr < 19 and 0 <= nc < 19 and board_mv[nr, nc] == player:
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == player:
                             count_ally += 1
-                        else:
-                            break
+                        else: break
 
+                    # -- Comptage ENNEMIS --
                     count_enemy = 0
                     for step in range(1, 5):
                         nr = r + dr * step; nc = c + dc * step
-                        if 0 <= nr < 19 and 0 <= nc < 19 and board_mv[nr, nc] == opponent:
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == opponent:
                             count_enemy += 1
-                        else:
-                            break
+                        else: break
+                        
                     for step in range(1, 5):
                         nr = r - dr * step; nc = c - dc * step
-                        if 0 <= nr < 19 and 0 <= nc < 19 and board_mv[nr, nc] == opponent:
+                        if 0 <= nr < 19 and 0 <= nc < 19 and board[nr, nc] == opponent:
                             count_enemy += 1
-                        else:
-                            break
+                        else: break
 
+                    # -- SCORING TACTIQUE --
                     if count_ally >= 4:   score_i += 100000
                     elif count_ally == 3: score_i += 1000
                     elif count_ally == 2: score_i += 100
@@ -786,18 +797,30 @@ cpdef list sort_candidates(cnp.ndarray board, int[:, :] candidate_board,
                     elif count_enemy == 2: score_i += 80
                     elif count_enemy == 1: score_i += 8
 
-                # Spatial tiebreaker: favour centre (integer arithmetic only)
+                # Spatial tiebreaker: favorise le centre
                 distance = abs(r - center) + abs(c - center)
                 score_i -= distance
 
                 if not check_double_three(board, r, c, player):
                     scored_moves.append((score_i, (r, c)))
 
+    # Tri du meilleur au pire
     scored_moves.sort(reverse=True)
+    
+    # === LE GARDE-FOU (SAFEGUARD) ===
     if max_count > 0:
-        return [item[1] for item in scored_moves[:max_count]]
-    return [item[1] for item in scored_moves]
+        for item in scored_moves:
+            # item[0] = le score, item[1] = les coordonnées (r, c)
+            # On prend si on a de la place OU si c'est une urgence vitale (>= 80000)
+            if count < max_count or item[0] >= 80000:
+                final_moves.append(item[1])
+                count += 1
+            else:
+                break
+        return final_moves
 
+    # Si max_count = 0 (désactivé), on renvoie tout
+    return [item[1] for item in scored_moves]
 
 cpdef list get_candidates_for_heatmap(cnp.ndarray board, int player):
     """Return all sorted candidates (same policy as minimax, no top-N cutoff)."""

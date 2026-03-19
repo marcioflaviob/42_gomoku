@@ -232,7 +232,8 @@ async def update(sid, data):
         return
 
     result = play(current_game, row, col, color)
-
+    if result == 3:
+        result = 0
     if result == -1:
         await emit_forbidden(sid)
         return
