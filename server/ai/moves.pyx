@@ -94,18 +94,17 @@ cpdef int check_win(cnp.int64_t[:, :] board, int row, int col, str winner, list 
 
         if count >= 5:
             check_no_capture = _win_line_capturable(board, win_r, win_c, wlen, color)
-            if not check_no_capture or winner == "oppo":
+            if check_no_capture == False or winner == "oppo":
                 return color
             elif check_no_capture:
                 return 3
     return 0
 
 
-cpdef int check_double_three(cnp.ndarray board, int row, int col, int color):
+cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int color):
     if color == 0:
         return 0
 
-    cdef cnp.int64_t[:, :] bv = board
     cdef int opponent = 3 - color
 
     cdef int DRS[4]
@@ -128,7 +127,7 @@ cpdef int check_double_three(cnp.ndarray board, int row, int col, int color):
             r = row + dr * i
             c = col + dc * i
             if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
-                buf[i + 4] = color if i == 0 else <int>bv[r, c]
+                buf[i + 4] = color if i == 0 else <int>board[r, c]
             else:
                 buf[i + 4] = opponent
 
@@ -162,10 +161,6 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
     """
     Returns 1 if any stone in the win line sits in a capture pattern
     (opponent can remove it), 0 if the line is safe.
-
-    Pattern checked (for each cell in the win line, each of 4 directions):
-      OXX.  or  .XXO   — where X = color, O = opponent, . = EMPTY
-    We look at a 5-cell window centred on the win-line cell.
     """
     cdef int DRS[4]
     cdef int DCS[4]
@@ -175,31 +170,49 @@ cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
     DRS[3] = 1; DCS[3] = -1
 
     cdef int opponent = 3 - color
+    cdef int EMPTY = 0  # Assurez-vous que 0 est bien votre constante EMPTY
+    
+    # Déclaration stricte de TOUTES les variables pour le nogil
     cdef int k, d, dr, dc, i
-    cdef int r, c
-    cdef int seg[5]   # 5-cell window centred on the stone
-    cdef int v
+    cdef int r, c, rr, cc
+    cdef int seg[5]
 
     for k in range(wlen):
-        r = win_r[k]; c = win_c[k]
+        r = win_r[k]
+        c = win_c[k]
+        
         for d in range(4):
-            dr = DRS[d]; dc = DCS[d]
-            # Fill 5-cell window: positions -2,-1,0,+1,+2
+            dr = DRS[d]
+            dc = DCS[d]
+            
+            # 1. Remplissage de la fenêtre de 5 cases centrée sur (r, c)
             for i in range(5):
                 rr = r + dr * (i - 2)
                 cc = c + dc * (i - 2)
                 if 0 <= rr < BOARD_SIZE and 0 <= cc < BOARD_SIZE:
                     seg[i] = <int>bv[rr, cc]
                 else:
-                    seg[i] = -1   # wall sentinel
+                    seg[i] = -1   # Mur / Hors-plateau
 
-            # OXX.  →  seg[0]=opponent, seg[1]=color, seg[2]=color, seg[3]=EMPTY
-            if (seg[0] == opponent and seg[1] == color and
-                    seg[2] == color and seg[3] == EMPTY):
-                return 1
-            # .XXO  →  seg[1]=EMPTY, seg[2]=color, seg[3]=color, seg[4]=opponent
-            if (seg[1] == EMPTY and seg[2] == color and
-                    seg[3] == color and seg[4] == opponent):
-                return 1
+            # 2. La pierre centrale seg[2] est notre pierre.
+            # On vérifie les deux paires possibles qui l'incluent.
+
+            # -- PAIRE 1 : La paire est formée par seg[1] et seg[2] --
+            if seg[1] == color:
+                # O X X . (L'adversaire bloque à gauche, l'espace est à droite)
+                if seg[0] == opponent and seg[3] == EMPTY:
+                    return 1
+                # . X X O (L'espace est à gauche, l'adversaire bloque à droite) -> MANQUANT !
+                if seg[0] == EMPTY and seg[3] == opponent:
+                    return 1
+
+            # -- PAIRE 2 : La paire est formée par seg[2] et seg[3] --
+            if seg[3] == color:
+                # . X X O (L'espace est à gauche, l'adversaire bloque à droite)
+                if seg[1] == EMPTY and seg[4] == opponent:
+                    return 1
+                # O X X . (L'adversaire bloque à gauche, l'espace est à droite) -> MANQUANT !
+                if seg[1] == opponent and seg[4] == EMPTY:
+                    return 1
 
     return 0

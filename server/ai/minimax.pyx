@@ -291,7 +291,7 @@ cpdef double minimax(
     if check_win(board, last_move[0], last_move[1], "me",
                  [player1_captures, player2_captures]):
         compteur_heuristique += 1
-        winner_color = <int>board_mv[lm_r, lm_c]
+        winner_color = <int>board[lm_r, lm_c]
         if winner_color == player:
             return 10_000_000.0
         elif winner_color == opponent:
