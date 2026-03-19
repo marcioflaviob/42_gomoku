@@ -101,11 +101,12 @@ cpdef int check_win(cnp.int64_t[:, :] board, int row, int col, str winner, list 
     return 0
 
 
-cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int color):
+cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int color) :
     if color == 0:
         return 0
 
     cdef int opponent = 3 - color
+    cdef int EMPTY = 0  # Assurez-vous que cette constante correspond à votre code
 
     cdef int DRS[4]
     cdef int DCS[4]
@@ -117,43 +118,46 @@ cpdef int check_double_three(cnp.int64_t[:, :] board, int row, int col, int colo
     cdef int free_three_count = 0
     cdef int d, i, j, dr, dc, r, c, v
     cdef int buf[9]
-    cdef int wpc, wec
-    cdef bint has_opponent, found, left_open, right_open
+    cdef int wpc
+    cdef bint found
 
     for d in range(4):
-        dr = DRS[d]; dc = DCS[d]
+        dr = DRS[d]
+        dc = DCS[d]
 
+        # 1. Remplissage du buffer (Les murs et bords sont traités comme des ennemis)
         for i in range(-4, 5):
             r = row + dr * i
             c = col + dc * i
-            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+            if 0 <= r < 19 and 0 <= c < 19:
                 buf[i + 4] = color if i == 0 else <int>board[r, c]
             else:
-                buf[i + 4] = opponent
-
+                buf[i + 4] = opponent 
         found = False
+        # 2. Scanner les fenêtres de 6 cases (indices : 0..5, 1..6, 2..7, 3..8)
         for i in range(4):
-            wpc = 0; wec = 0; has_opponent = False
-            for j in range(6):
-                v = buf[i + j]
-                if v == color:       wpc += 1
-                elif v == EMPTY:     wec += 1
-                else:                has_opponent = True
-
-            if has_opponent or wpc != 3 or wec != 3:
-                continue
-
-            left_open  = (i == 0)     or (buf[i - 1] == EMPTY)
-            right_open = (i + 6 >= 9) or (buf[i + 6] == EMPTY)
-
-            if left_open and right_open:
-                found = True
-                break
-
+            # LE THÉORÈME : La fenêtre de 6 DOIT commencer et finir par un vide
+            if buf[i] == EMPTY and buf[i + 5] == EMPTY:
+                wpc = 0
+                # On ne vérifie que les 4 cases du milieu !
+                for j in range(1, 5):
+                    v = buf[i + j]
+                    if v == color:
+                        wpc += 1
+                    elif v == opponent:
+                        wpc = -10  # Annulation instantanée si un ennemi est dans la zone
+                        break
+                        
+                # S'il y a exactement 3 pions (donc 1 vide restant), c'est un trois libre !
+                if wpc == 3:
+                    found = True
+                    break
         if found:
             free_three_count += 1
-
-    return 1 if free_three_count >= 2 else 0
+            # EARLY EXIT : Si on a déjà trouvé 2 trois libres, inutile de vérifier les autres axes !
+            if free_three_count >= 2:
+                return 1
+    return 0
 
 cdef bint _win_line_capturable(cnp.int64_t[:, :] bv,
                                 int* win_r, int* win_c, int wlen,
