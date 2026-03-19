@@ -252,7 +252,7 @@ async def update(sid, data):
 
 
         start_time = time.perf_counter()
-        best_move = await compute_best_move(current_game, Status.Player2, (row, col), depth=8)
+        best_move = await compute_best_move(current_game, Status.Player2, (row, col), depth=10)
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
 
