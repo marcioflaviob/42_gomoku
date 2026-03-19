@@ -31,7 +31,7 @@ def get_possible_captures(board: np.ndarray, player: int) -> list[tuple[int, int
     return captures
 
 
-def apply_capture(board: np.ndarray, move: tuple[int, int], player: int) -> int:
+def apply_capture(board: np.ndarray, move: tuple[int, int], player: int) -> list[tuple[int, int]]:
     """
     Places a stone at move for player, removes any captured pairs.
     Returns number of stones captured (0 or 2 per direction, can be multiple).
@@ -41,7 +41,7 @@ def apply_capture(board: np.ndarray, move: tuple[int, int], player: int) -> int:
     opponent = 2 if player == 1 else 1
     captured = 0
     directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-
+    captured_positions = []
     for dr, dc in directions:
         for sign in (1, -1):
             r1, c1 = row + sign * dr, col + sign * dc
@@ -55,9 +55,10 @@ def apply_capture(board: np.ndarray, move: tuple[int, int], player: int) -> int:
             ):
                 board[r1][c1] = EMPTY
                 board[r2][c2] = EMPTY
+                captured_positions.append((r1,c1))
+                captured_positions.append((r2,c2))
                 captured += 2
-
-    return captured
+    return captured_positions
 
 def create_snapshot(state):
     return {

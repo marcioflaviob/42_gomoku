@@ -2,6 +2,6 @@ venv/
 ai/__pycache__
 __pycache__/
 build/
-ai_cython/*.c
-ai_cython/*.cpython-*.so
+ai/*.c
+ai/*.cpython-*.so
 .DS_Store

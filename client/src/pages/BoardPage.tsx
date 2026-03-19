@@ -175,7 +175,7 @@ const BoardPage: React.FC = () => {
         </div>
         <div className={`rounded-lg shadow-md p-4 min-w-max ${theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'}`}>
           <h3 className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>AI Response Time</h3>
-          <p className="text-2xl font-bold text-blue-600">{aiResponseTime.toFixed(5)}ms</p>
+          <p className="text-2xl font-bold text-blue-600">{aiResponseTime.toFixed(3)}s</p>
         </div>
       </div>
 

@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 
 try:
-    from ai_cython.moves import play, undo, redo
-    from ai_cython.minimax import get_best_move
+    from ai.moves import play, undo, redo
+    from ai.minimax import get_best_move
 except ImportError:
     # Fallback to pure Python modules when Cython extensions are not built yet.
     print("⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️")
@@ -114,7 +114,7 @@ async def update(sid, data):
         current_game["captured_white_black"][0],
         current_game["captured_white_black"][1],
         (row,col),
-        6,
+        8,
     )
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time
