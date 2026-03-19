@@ -219,7 +219,8 @@ async def update(sid, data):
         return
 
     result = play(current_game, row, col, color)
-
+    if result == 3:
+        result = 0
     if result == -1:
         await emit_forbidden(sid)
         return
@@ -239,6 +240,8 @@ async def update(sid, data):
     elapsed_time = end_time - start_time
 
     result = play(current_game, best_move[0], best_move[1], Status.Player2)
+    if result == 3:
+        result = 0
     if result == -1:
         await emit_forbidden(sid)
         return

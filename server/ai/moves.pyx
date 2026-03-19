@@ -8,13 +8,13 @@ cnp.import_array()
 DEF BOARD_SIZE = 19
 DEF EMPTY      = 0
 
-cpdef list apply_capture(cnp.ndarray board, tuple move, int player):
+cpdef list apply_capture(cnp.int64_t[:, :] board, tuple move, int player):
     cdef cnp.int64_t[:, :] bv = board
     cdef int row      = move[0]
     cdef int col      = move[1]
     cdef int opponent = 3 - player
 
-    bv[row, col] = player
+    board[row, col] = player
 
     # 8 unit directions (all 4 axes, both signs)
     cdef int DRS[8]
@@ -38,23 +38,20 @@ cpdef list apply_capture(cnp.ndarray board, tuple move, int player):
         r2 = row + 2 * dr; c2 = col + 2 * dc
         r3 = row + 3 * dr; c3 = col + 3 * dc
         if (0 <= r3 < BOARD_SIZE and 0 <= c3 < BOARD_SIZE and
-                bv[r1, c1] == opponent and
-                bv[r2, c2] == opponent and
-                bv[r3, c3] == player):
-            bv[r1, c1] = EMPTY
-            bv[r2, c2] = EMPTY
+                board[r1, c1] == opponent and
+                board[r2, c2] == opponent and
+                board[r3, c3] == player):
+            board[r1, c1] = EMPTY
+            board[r2, c2] = EMPTY
             captured.append((r1, c1))
             captured.append((r2, c2))
 
     return captured
 
-cpdef int check_win(cnp.ndarray board, int row, int col,
-                    str winner, list captures):
-    cdef cnp.int64_t[:, :] bv = board
-    cdef int color = <int>bv[row, col]
+cpdef int check_win(cnp.int64_t[:, :] board, int row, int col, str winner, list captures):
+    color = board[row][col]
     if color == EMPTY:
         return 0
-
     # Capture-count win
     if captures[color - 1] >= 10:
         return color
@@ -82,24 +79,25 @@ cpdef int check_win(cnp.ndarray board, int row, int col,
 
         for i in range(1, 5):
             r = row + dr * i; c = col + dc * i
-            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and bv[r, c] == color:
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and board[r, c] == color:
                 win_r[wlen] = r; win_c[wlen] = c
                 wlen += 1; count += 1
             else:
                 break
         for i in range(1, 5):
             r = row - dr * i; c = col - dc * i
-            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and bv[r, c] == color:
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and board[r, c] == color:
                 win_r[wlen] = r; win_c[wlen] = c
                 wlen += 1; count += 1
             else:
                 break
 
         if count >= 5:
-            # If playing as "oppo" skip capture-safety check (opponent already won)
-            if winner == "oppo" or not _win_line_capturable(bv, win_r, win_c, wlen, color):
+            check_no_capture = _win_line_capturable(board, win_r, win_c, wlen, color)
+            if not check_no_capture or winner == "oppo":
                 return color
-
+            elif check_no_capture:
+                return 3
     return 0
 
 
