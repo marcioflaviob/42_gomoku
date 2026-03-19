@@ -54,10 +54,8 @@ def play(game_state, row, col, color):
     check_win_result = check_win(board,row, col,"me",captured_white_black)
     if check_win_result == 1 or check_win_result == 2:
         return check_win_result
-    print(last_play)
     if  last_play != [0, -1] and check_win(board,last_play[0], last_play[1], "oppo",captured_white_black):
         opposite_color = 2 if color == 1 else 1
-        print("ici")
         return opposite_color
     game_state["last_play"] = [row, col]
     return 0

@@ -205,7 +205,6 @@ const BoardPage: React.FC = () => {
       socketRef.current = io(import.meta.env.VITE_API_URL);
 
       socketRef.current.on('boardUpdate', (data: Board) => {
-        console.log('Received board update:', data);
         if (winnerRef.current !== 0) return; // Ignore updates if game is already won
         if (modeRef.current === GameMode.AIBattle) {
           setLoading(data.winner === 0);

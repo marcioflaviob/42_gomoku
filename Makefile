@@ -47,9 +47,15 @@ run-frontend: install-client
 	cd $(FRONTEND_DIR) && $(NPM) run dev
 
 start: install
-	@trap 'kill 0' INT TERM EXIT; \
-	( cd $(BACKEND_DIR) && ../$(UVICORN) $(BACKEND_APP) --reload --port $(BACKEND_PORT) ) & \
-	( cd $(FRONTEND_DIR) && $(NPM) run dev ) & \
+	@backend_pid=; frontend_pid=; \
+	trap ' \
+		[ -n "$$backend_pid" ] && kill -TERM "$$backend_pid" 2>/dev/null || true; \
+		[ -n "$$frontend_pid" ] && kill -TERM "$$frontend_pid" 2>/dev/null || true; \
+		[ -n "$$backend_pid" ] && pkill -TERM -P "$$backend_pid" 2>/dev/null || true; \
+		wait; \
+	' INT TERM EXIT; \
+	( cd $(BACKEND_DIR) && ../$(UVICORN) $(BACKEND_APP) --reload --port $(BACKEND_PORT) ) & backend_pid=$$!; \
+	( cd $(FRONTEND_DIR) && $(NPM) run dev ) & frontend_pid=$$!; \
 	wait
 
 clean:
@@ -59,3 +65,5 @@ clean:
 	find $(BACKEND_DIR)/ai -type f -name "*.c" -delete
 
 re: clean install
+
+# lsof -ti tcp:8000 / kill -9 pid

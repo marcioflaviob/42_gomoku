@@ -277,7 +277,16 @@ cpdef double negascout(
         compteur_heuristique += 1
         return board_score
 
-    candidates = sort_candidates(board, candidate_board, current_player)
+    cdef int dynamic_max
+    if depth >= 8:
+        dynamic_max = 10
+    elif depth >= 3:
+        dynamic_max = 5
+    else:
+        dynamic_max = 3
+
+    candidates = sort_candidates(board, candidate_board, current_player, dynamic_max)
+
     if not candidates:
         return board_score
 
@@ -618,7 +627,7 @@ cpdef dict get_heatmap_scores(
     return move_scores
 
 cpdef list sort_candidates(cnp.int64_t[:, :] board, int[:, :] candidate_board,
-                            int player, int max_count=30):
+                            int player, int max_count=15):
     cdef int center   = 9
     cdef int opponent = 3 - player
 
