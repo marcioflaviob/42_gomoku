@@ -59,7 +59,7 @@ start: install
 	wait
 
 clean:
-	rm -rf build
+	rm -rf $(BACKEND_DIR)/build
 	find $(BACKEND_DIR) -type f \( -name "*.so" -o -name "*.pyd" -o -name "*.dylib" \) -delete
 	find $(BACKEND_DIR) -type d -name "__pycache__" -prune -exec rm -rf {} +
 	find $(BACKEND_DIR)/ai -type f -name "*.c" -delete
